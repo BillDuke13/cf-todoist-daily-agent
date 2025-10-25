@@ -1,0 +1,2 @@
+# This address is compatible with Ethereum and other EVM networks such as Base, Optimism, Arbitrum One, etc.
+custom: ["ethereum:0xee56dA3F11B7EbeD08038078CbDa00aF204044Ee", "base:0xee56dA3F11B7EbeD08038078CbDa00aF204044Ee", "op:0xee56dA3F11B7EbeD08038078CbDa00aF204044Ee", "arbitrum-one:0xee56dA3F11B7EbeD08038078CbDa00aF204044Ee"]
