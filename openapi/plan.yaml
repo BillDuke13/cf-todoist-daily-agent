@@ -1,0 +1,304 @@
+openapi: 3.1.0
+info:
+  title: Todoist Daily Agent API
+  description: |
+    Cloudflare Worker endpoint that orchestrates Workers AI planning and the Todoist MCP Streamable HTTP pipeline.
+    The API follows Google Cloud API Design Guide conventions and returns newline-delimited JSON events so clients
+    can surface progress in near real time.
+  version: "1.0.0"
+servers:
+  - url: https://{workerHost}
+    description: Deployed Worker hostname.
+    variables:
+      workerHost:
+        default: cf-todoist-daily-agent.example.workers.dev
+security:
+  - BasicAuth: []
+paths:
+  /plan:
+    options:
+      summary: Preflight request
+      description: Responds to browser preflight requests. Always returns 204 to signal the supported headers.
+      responses:
+        "204":
+          description: CORS metadata returned with no body.
+    post:
+      summary: Generate a daily plan and synchronize Todoist tasks
+      description: |
+        Accepts a narrative prompt plus scheduling preferences, asks `@cf/openai/gpt-oss-120b` (JSON Mode) to emit
+        a `todoist_task_plan` schema, and pushes each resulting task to the Todoist MCP Streamable HTTP server.
+        The response body is `application/x-ndjson` where every line is a discrete event describing AI progress,
+        Todoist MCP calls, errors, and the final summary.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlanRequest'
+      responses:
+        "200":
+          description: NDJSON stream containing status, AI, Todoist, and final events.
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: '#/components/schemas/PlanEventStream'
+        "400":
+          description: Validation failure.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Origin not authorized by `FRONTEND_ORIGIN`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /transcribe:
+    post:
+      summary: Convert microphone audio into a planning prompt
+      description: |
+        Helper endpoint used by the front-end voice button. Accepts a base64 encoded WebM/Opus clip (≤ 60 seconds),
+        forwards it to `@cf/openai/whisper-large-v3-turbo`, and returns the raw text transcription so the UI can
+        auto-submit `/plan`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WhisperRequest'
+      responses:
+        "200":
+          description: Successfully transcribed audio.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptionResponse'
+        "400":
+          description: Invalid payload (missing audio or exceeding size limits).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "413":
+          description: Audio payload is larger than the allowed 8MB limit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Whisper model invocation failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  securitySchemes:
+    BasicAuth:
+      type: http
+      scheme: basic
+  schemas:
+    PlanRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+          description: Natural language description of what should be planned for the day.
+        due:
+          type: string
+          description: Natural language deadline (for example “today before 6pm”).
+        timezone:
+          type: string
+          description: IANA timezone name used when the model generates natural language due strings.
+        preferences:
+          type: string
+          description: Additional constraints, focus blocks, or other hints for the planner.
+        labels:
+          type: array
+          maxItems: 5
+          items:
+            type: string
+          description: Default Todoist labels to apply to every generated task unless overridden by the model.
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 4
+          description: Default Todoist priority when the model does not supply one.
+        maxTasks:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 5
+          description: Caps the number of actionable tasks generated by Workers AI.
+    PlanEventStream:
+      description: |
+        The Worker returns newline-delimited JSON. Each line is one of the following event envelopes. Clients should
+        parse until the stream ends to surface progress in real time.
+      type: array
+      items:
+        $ref: '#/components/schemas/PlanEvent'
+    PlanEvent:
+      oneOf:
+        - type: object
+          required: [type, stage, message, timestamp]
+          properties:
+            type:
+              const: status
+            stage:
+              type: string
+              description: Identifier for the subsystem currently running (for example `ai:init`).
+            message:
+              type: string
+            timestamp:
+              type: string
+              format: date-time
+        - type: object
+          required: [type, tasks, timestamp]
+          properties:
+            type:
+              const: ai.plan
+            summary:
+              type: string
+            intent:
+              type: string
+              description: Scenario detected by the intent classifier (for example `single_reminder`).
+            tasks:
+              type: array
+              items:
+                $ref: '#/components/schemas/NormalizedTask'
+            timestamp:
+              type: string
+              format: date-time
+        - type: object
+          required: [type, status, task, timestamp]
+          properties:
+            type:
+              const: todoist.task
+            status:
+              type: string
+              enum: [pending, created, failed]
+            task:
+              $ref: '#/components/schemas/NormalizedTask'
+            todoistId:
+              type: string
+            error:
+              type: string
+            timestamp:
+              type: string
+              format: date-time
+        - type: object
+          required: [type, created, failed, tasks, elapsedMs, timestamp]
+          properties:
+            type:
+              const: final
+            created:
+              type: integer
+            failed:
+              type: integer
+            tasks:
+              type: array
+              items:
+                $ref: '#/components/schemas/TodoistTaskResult'
+            elapsedMs:
+              type: integer
+            timestamp:
+              type: string
+              format: date-time
+        - type: object
+          required: [type, message, timestamp]
+          properties:
+            type:
+              const: error
+            message:
+              type: string
+            detail:
+              type: string
+            timestamp:
+              type: string
+              format: date-time
+    WhisperRequest:
+      type: object
+      required:
+        - audio
+      additionalProperties: false
+      properties:
+        audio:
+          type: string
+          description: Base64 encoded audio data (WebM/Opus recommended, ≤ 8MB decoded).
+        language:
+          type: string
+          description: Optional hint for the language contained in the audio clip.
+        task:
+          type: string
+          enum: [transcribe, translate]
+          description: Defaults to `transcribe`.
+    TranscriptionResponse:
+      type: object
+      required:
+        - text
+      properties:
+        text:
+          type: string
+          description: Transcribed text returned by Whisper.
+        language:
+          type: string
+          description: Language code detected by the model, when available.
+    NormalizedTask:
+      type: object
+      required:
+        - title
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 4
+        labels:
+          type: array
+          items:
+            type: string
+        projectId:
+          type: string
+          description: Todoist project ID that the task should be created in.
+        project:
+          type: string
+          description: Human-readable project name aligned with `projectId`.
+        due:
+          type: object
+          properties:
+            string:
+              type: string
+            date:
+              type: string
+              pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+            datetime:
+              type: string
+              format: date-time
+    TodoistTaskResult:
+      type: object
+      required:
+        - planned
+        - status
+      properties:
+        planned:
+          $ref: '#/components/schemas/NormalizedTask'
+        status:
+          type: string
+          enum: [created, failed]
+        todoistId:
+          type: string
+        error:
+          type: string
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string

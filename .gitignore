@@ -78,6 +78,18 @@ web_modules/
 .next
 out
 
+# OpenNext / Cloudflare build output
+.open-next/
+.wrangler/
+.mf/
+.wrangler-src/
+
+# Cloudflare / Wrangler environment files
+.dev.vars
+cloudflare.env
+cloudflare.env.*
+wrangler.state.json
+
 # Nuxt.js build / generate output
 .nuxt
 dist
@@ -137,3 +149,18 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# AI Assistants
+CLAUDE.md
+.claude
+.serena
+AGENTS.md
+SYNC_REPORT*
+
+# IDE artifacts
+.vscode
+.idea/
+.fleet/
+.history/
+.DS_Store
+.Trash-*
