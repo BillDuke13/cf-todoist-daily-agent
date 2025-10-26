@@ -80,8 +80,5 @@ OpenAPI schemas define request/response bodies for automation and client generat
 - `pnpm preview`
 - `wrangler dev --local` followed by a sample curl (as above) to validate NDJSON streaming and Todoist MCP connectivity.
 
-## Contributing
-Issues and pull requests are welcome. Please follow Conventional Commits and run the test matrix above before submitting PRs. When touching docs, keep `docs/` (English) and Serena memories (Chinese, git-ignored) in sync per the Agents Playbook.
-
 ## License
 Licensed under the [Apache License, Version 2.0](LICENSE).
