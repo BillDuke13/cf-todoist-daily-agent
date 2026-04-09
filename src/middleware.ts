@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
@@ -34,7 +35,7 @@ export function middleware(request: NextRequest) {
   const providedUser = decoded.slice(0, separator);
   const providedPass = decoded.slice(separator + 1);
 
-  if (providedUser !== username || providedPass !== password) {
+  if (!safeEqual(providedUser, username) || !safeEqual(providedPass, password)) {
     return unauthorized();
   }
 
@@ -48,6 +49,16 @@ function unauthorized() {
       "WWW-Authenticate": `Basic realm="${REALM}", charset="UTF-8"`,
     },
   });
+}
+
+function safeEqual(a: string, b: string) {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) {
+    timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return timingSafeEqual(bufA, bufB);
 }
 
 export const config = {

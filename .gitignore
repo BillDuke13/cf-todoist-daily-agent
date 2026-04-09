@@ -150,9 +150,9 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
-# AI Assistants
-CLAUDE.md
-.claude
+# AI Assistants — personal / local files
+CLAUDE.local.md
+.claude/settings.local.json
 .serena
 AGENTS.md
 SYNC_REPORT*

@@ -422,12 +422,6 @@ export async function POST(request: NextRequest) {
           const inferredProject = inferProjectFromPrompt(data.prompt, todoistContext);
           const inferredLabels = inferLabelsFromPrompt(data.prompt, todoistContext);
           const plan = await generatePlan(env, data, scenario, intentDecision, todoistContext, priorityHint, inferredProject, inferredLabels);
-          console.log("[todoist.debug.plan]", {
-            projects: todoistContext.projects,
-            inferredProject,
-            inferredLabels,
-            tasks: plan.tasks,
-          });
           send({
             type: "debug.inference",
             inferredProject,
@@ -463,7 +457,6 @@ export async function POST(request: NextRequest) {
           send({
             type: "error",
             message: "Failed to generate the plan",
-            detail: error instanceof Error ? error.message : String(error),
             timestamp: new Date().toISOString(),
           });
           controller.close();
@@ -551,10 +544,6 @@ async function fetchTodoistMetadata(client: Client | null, tools?: Tool[]) {
     projectTool ? callTodoistListTool(client, projectTool) : Promise.resolve([]),
     labelTool ? callTodoistListTool(client, labelTool) : Promise.resolve([]),
   ]);
-  // Debug: log raw project data to understand the API response structure
-  if (Array.isArray(projects) && projects.length > 0) {
-    console.log("[todoist.debug.raw-projects]", JSON.stringify(projects.slice(0, 3)));
-  }
   const projectSummaries: TodoistProjectSummary[] = Array.isArray(projects)
     ? (projects as Array<{ id: string; name: string; is_inbox_project?: boolean; inbox_project?: boolean; isInbox?: boolean }>).map((project) => ({
         id: project.id,
@@ -569,12 +558,6 @@ async function fetchTodoistMetadata(client: Client | null, tools?: Tool[]) {
         name: label.name,
       }))
     : [];
-  console.log("[todoist.debug.metadata]", {
-    projectTool: projectTool?.name,
-    labelTool: labelTool?.name,
-    projectSamples: projectSummaries.slice(0, 3),
-    labelSamples: labelSummaries.slice(0, 3),
-  });
   return { projects: projectSummaries, labels: labelSummaries };
 }
 
@@ -1065,7 +1048,6 @@ async function syncWithTodoist(
       const isBulkTool = toolName === "add-tasks" || toolName === "add_tasks";
       const args = toTodoistArgs(task, input, { priorityStyle: isBulkTool ? "string" : "number" });
       const payload = isBulkTool ? { tasks: [args] } : args;
-      console.log("[todoist.debug.call-args]", { toolName, isBulkTool, payload });
       const response = await client.callTool({
         name: toolName,
         arguments: payload,
@@ -1315,13 +1297,13 @@ function stripJsonFence(payload: string) {
   if (!trimmed.startsWith("```")) {
     return trimmed;
   }
-  const fenceEnd = trimmed.lastIndexOf("```");
-  if (fenceEnd === -1) {
-    return trimmed;
-  }
   const firstLineBreak = trimmed.indexOf("\n");
   if (firstLineBreak === -1) {
     return trimmed;
+  }
+  const fenceEnd = trimmed.lastIndexOf("```");
+  if (fenceEnd <= firstLineBreak) {
+    return trimmed.slice(firstLineBreak + 1).trim();
   }
   return trimmed.slice(firstLineBreak + 1, fenceEnd).trim();
 }

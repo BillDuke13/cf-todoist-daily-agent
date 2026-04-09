@@ -101,12 +101,15 @@ export default function Home() {
     [events],
   );
 
-  const supportsVoiceInput =
-    typeof window !== "undefined" &&
-    typeof navigator !== "undefined" &&
-    "mediaDevices" in navigator &&
-    typeof navigator.mediaDevices?.getUserMedia === "function" &&
-    typeof window.MediaRecorder !== "undefined";
+  const supportsVoiceInput = useMemo(
+    () =>
+      typeof window !== "undefined" &&
+      typeof navigator !== "undefined" &&
+      "mediaDevices" in navigator &&
+      typeof navigator.mediaDevices?.getUserMedia === "function" &&
+      typeof window.MediaRecorder !== "undefined",
+    [],
+  );
 
   useEffect(() => {
     return () => {
@@ -583,13 +586,15 @@ function renderEvent(event: PlannerEvent) {
   }
 }
 
-async function blobToBase64(blob: Blob) {
-  const buffer = await blob.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
-  }
-  return btoa(binary);
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+      resolve(base64);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read audio blob"));
+    reader.readAsDataURL(blob);
+  });
 }
