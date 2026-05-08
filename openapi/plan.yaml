@@ -55,6 +55,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
   /transcribe:
+    options:
+      summary: Preflight request
+      description: Responds to browser preflight requests. Always returns 204 to signal the supported headers.
+      responses:
+        "204":
+          description: CORS metadata returned with no body.
     post:
       summary: Convert microphone audio into a planning prompt
       description: |
@@ -216,6 +222,21 @@ components:
               type: string
             detail:
               type: string
+            timestamp:
+              type: string
+              format: date-time
+        - type: object
+          required: [type, timestamp]
+          additionalProperties: true
+          description: |
+            Internal observability event emitted only when the worker is started with `DEBUG_EVENTS=true`.
+            Concrete variants include `debug.tools`, `debug.metadata`, `debug.inference`, and `debug.error`.
+            The payload shape is intentionally open and is NOT part of the stable contract; production
+            clients must ignore unknown event types instead of relying on these.
+          properties:
+            type:
+              type: string
+              pattern: '^debug\.'
             timestamp:
               type: string
               format: date-time

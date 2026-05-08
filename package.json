@@ -4,10 +4,13 @@
 	"private": true,
 	"scripts": {
 		"dev": "next dev --turbopack",
+		"prebuild": "pnpm cf-typegen",
 		"build": "next build --webpack",
 		"start": "next start",
 		"lint": "eslint .",
+		"predeploy": "pnpm cf-typegen",
 		"deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+		"prepreview": "pnpm cf-typegen",
 		"preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
 		"cf-typegen": "wrangler types --env-interface CloudflareEnv ./cloudflare-env.d.ts"
 	},

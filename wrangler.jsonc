@@ -20,6 +20,9 @@
 	},
 	"observability": {
 		"enabled": true
+	},
+	"vars": {
+		"DEBUG_EVENTS": "false"
 	}
 	/**
 	 * Smart Placement

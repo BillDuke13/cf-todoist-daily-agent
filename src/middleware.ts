@@ -1,13 +1,28 @@
 import { Buffer } from "node:buffer";
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { SECURITY_HEADERS, parseAllowedOrigins } from "@/lib/cors";
 
 const REALM = "Todoist Daily Agent";
 
 export function middleware(request: NextRequest) {
   const { env } = getCloudflareContext();
+
+  // CORS preflight requests cannot carry an Authorization header (Fetch spec),
+  // so they must bypass Basic Auth. Defense-in-depth: pre-validate Origin in
+  // the middleware itself so any future route that forgets to call
+  // resolveOrigin() cannot be probed cross-origin via OPTIONS.
+  if (request.method === "OPTIONS") {
+    const allowedOrigins = parseAllowedOrigins(env.FRONTEND_ORIGIN);
+    const requestOrigin = request.headers.get("origin");
+    if (requestOrigin && allowedOrigins.length > 0 && !allowedOrigins.includes(requestOrigin)) {
+      return new NextResponse("Forbidden", { status: 403, headers: SECURITY_HEADERS });
+    }
+    return withSecurityHeaders(NextResponse.next());
+  }
+
   const username = env.BASIC_AUTH_USER;
   const password = env.BASIC_AUTH_PASS;
 
@@ -39,7 +54,7 @@ export function middleware(request: NextRequest) {
     return unauthorized();
   }
 
-  return NextResponse.next();
+  return withSecurityHeaders(NextResponse.next());
 }
 
 function unauthorized() {
@@ -47,18 +62,24 @@ function unauthorized() {
     status: 401,
     headers: {
       "WWW-Authenticate": `Basic realm="${REALM}", charset="UTF-8"`,
+      ...SECURITY_HEADERS,
     },
   });
 }
 
+// Hash both inputs to a fixed-length digest so the comparison cost no longer
+// branches on the attacker-controlled input length.
 function safeEqual(a: string, b: string) {
-  const bufA = Buffer.from(a);
-  const bufB = Buffer.from(b);
-  if (bufA.length !== bufB.length) {
-    timingSafeEqual(bufA, bufA);
-    return false;
+  const digestA = createHash("sha256").update(a).digest();
+  const digestB = createHash("sha256").update(b).digest();
+  return timingSafeEqual(digestA, digestB);
+}
+
+function withSecurityHeaders(response: NextResponse) {
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+    response.headers.set(name, value);
   }
-  return timingSafeEqual(bufA, bufB);
+  return response;
 }
 
 export const config = {

@@ -374,7 +374,7 @@ export default function Home() {
                   id="prompt"
                   name="prompt"
                   required
-                  minLength={3}
+                  minLength={1}
                   placeholder="E.g. prep briefing deck, follow up with design team, schedule physical therapy, block time to review KPIs."
                   className={styles.promptInput}
                   value={prompt}
