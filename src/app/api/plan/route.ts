@@ -4,6 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { OriginNotAllowedError, buildCorsHeaders, forbidden, resolveOrigin } from "@/lib/cors";
 
 /**
  * Cloudflare Worker handler for the `/plan` endpoint.
@@ -19,13 +20,16 @@ const INTENT_MODEL_ID = "@cf/openai/gpt-oss-120b";
 const PLAN_MODEL_ID = "@cf/openai/gpt-oss-20b";
 const MIN_TASKS = 1;
 const MAX_TASKS = 10;
+// Plans only carry short prompts and a few JSON fields; 64KB is a generous
+// upper bound that still rejects accidental log dumps or pasted documents.
+const MAX_PLAN_REQUEST_BYTES = 64 * 1024;
 
 const requestSchema = z.object({
-  prompt: z.string().min(1, "Prompt is required"),
-  timezone: z.string().min(3).optional(),
-  due: z.string().min(3).optional(),
-  preferences: z.string().min(1).optional(),
-  labels: z.array(z.string().min(1)).max(5).optional(),
+  prompt: z.string().min(1, "Prompt is required").max(8192),
+  timezone: z.string().min(3).max(64).optional(),
+  due: z.string().min(3).max(256).optional(),
+  preferences: z.string().min(1).max(2048).optional(),
+  labels: z.array(z.string().min(1).max(64)).max(5).optional(),
   priority: z.number().int().min(1).max(4).optional(),
   maxTasks: z.number().int().min(MIN_TASKS).max(MAX_TASKS).default(5),
 });
@@ -309,8 +313,8 @@ export async function OPTIONS(request: NextRequest) {
   try {
     origin = resolveOrigin(request, env.FRONTEND_ORIGIN);
   } catch (error) {
-    if (error instanceof Response) {
-      return error;
+    if (error instanceof OriginNotAllowedError) {
+      return forbidden();
     }
     throw error;
   }
@@ -333,10 +337,15 @@ export async function POST(request: NextRequest) {
   try {
     origin = resolveOrigin(request, env.FRONTEND_ORIGIN);
   } catch (error) {
-    if (error instanceof Response) {
-      return error;
+    if (error instanceof OriginNotAllowedError) {
+      return forbidden();
     }
     throw error;
+  }
+
+  const declaredLength = Number.parseInt(request.headers.get("content-length") ?? "", 10);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_PLAN_REQUEST_BYTES) {
+    return jsonError("Request body exceeds the maximum size of 64KB", origin, 413);
   }
 
   const body = await parseJson(request);
@@ -354,6 +363,10 @@ export async function POST(request: NextRequest) {
       const send = (event: unknown) => {
         controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
       };
+      const debugEnabled = isDebugEnabled(env);
+      const sendDebug = (event: unknown) => {
+        if (debugEnabled) send(event);
+      };
 
       (async () => {
         let transport: StreamableHTTPClientTransport | null = null;
@@ -369,7 +382,7 @@ export async function POST(request: NextRequest) {
               availableTools = toolCatalog?.tools ?? null;
               if (availableTools) {
                 console.log("[todoist.tools]", availableTools.map((tool) => tool.name));
-                send({
+                sendDebug({
                   type: "debug.tools",
                   tools: availableTools.map((tool) => ({
                     name: tool.name,
@@ -380,7 +393,7 @@ export async function POST(request: NextRequest) {
               }
             } catch (error) {
               console.warn("Unable to list Todoist MCP tools", error);
-              send({
+              sendDebug({
                 type: "debug.error",
                 stage: "tools",
                 message: error instanceof Error ? error.message : String(error),
@@ -413,7 +426,7 @@ export async function POST(request: NextRequest) {
           });
 
           const todoistContext = await fetchTodoistMetadata(client, availableTools ?? undefined);
-          send({
+          sendDebug({
             type: "debug.metadata",
             projects: todoistContext.projects,
             labels: todoistContext.labels,
@@ -422,7 +435,7 @@ export async function POST(request: NextRequest) {
           const inferredProject = inferProjectFromPrompt(data.prompt, todoistContext);
           const inferredLabels = inferLabelsFromPrompt(data.prompt, todoistContext);
           const plan = await generatePlan(env, data, scenario, intentDecision, todoistContext, priorityHint, inferredProject, inferredLabels);
-          send({
+          sendDebug({
             type: "debug.inference",
             inferredProject,
             inferredLabels,
@@ -454,9 +467,15 @@ export async function POST(request: NextRequest) {
           controller.close();
         } catch (error) {
           console.error("/plan failed", error);
+          // Only echo internal error text to the client when DEBUG_EVENTS is on.
+          // Production keeps the response opaque to avoid leaking stack traces,
+          // upstream MCP messages, or AI provider errors through the UI.
+          const detail =
+            debugEnabled && error instanceof Error ? error.message.slice(0, 500) : undefined;
           send({
             type: "error",
             message: "Failed to generate the plan",
+            detail,
             timestamp: new Date().toISOString(),
           });
           controller.close();
@@ -1129,7 +1148,7 @@ async function resolveToolName(client: Client, url: URL, token: string, availabl
     throw new Error("TODOIST_TOKEN is required to contact the MCP server");
   }
   let toolsList = availableTools;
-  if (!toolsList) {
+  if (!toolsList?.length) {
     const listed = await client.listTools();
     toolsList = listed?.tools ?? [];
   }
@@ -1273,7 +1292,7 @@ function extractResponsePayload(response: unknown) {
   if (result?.content?.length) {
     const textChunk = result.content.find((chunk) => chunk?.text);
     if (textChunk?.text) {
-      return JSON.parse(textChunk.text);
+      return safeJsonParse(textChunk.text);
     }
   }
 
@@ -1285,11 +1304,20 @@ function extractResponsePayload(response: unknown) {
       }
       const textBlock = chunk.content.find((item) => typeof item.text === "string");
       if (textBlock?.text) {
-        return JSON.parse(stripJsonFence(textBlock.text));
+        return safeJsonParse(stripJsonFence(textBlock.text));
       }
     }
   }
   return response;
+}
+
+function safeJsonParse(text: string) {
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : "invalid JSON";
+    throw new Error(`Workers AI returned invalid JSON (${cause})`);
+  }
 }
 
 function stripJsonFence(payload: string) {
@@ -1335,30 +1363,6 @@ function jsonError(message: string, origin: string, status = 400) {
   });
 }
 
-function resolveOrigin(request: NextRequest, allowed: string) {
-  const configured = allowed
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-  if (!configured.length) {
-    throw new Error("FRONTEND_ORIGIN is not configured");
-  }
-  const requestOrigin = request.headers.get("Origin");
-  if (!requestOrigin) {
-    return configured[0];
-  }
-  if (!configured.includes(requestOrigin)) {
-    throw new Response("Forbidden", { status: 403 });
-  }
-  return requestOrigin;
-}
-
-function buildCorsHeaders(origin: string, extra?: Record<string, string>) {
-  return {
-    "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Methods": "OPTIONS, POST",
-    "Access-Control-Allow-Headers": "content-type",
-    Vary: "Origin",
-    ...extra,
-  };
+function isDebugEnabled(env: CloudflareEnv) {
+  return (env as unknown as { DEBUG_EVENTS?: string }).DEBUG_EVENTS === "true";
 }
