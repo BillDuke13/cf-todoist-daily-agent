@@ -5,6 +5,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { OriginNotAllowedError, buildCorsHeaders, forbidden, resolveOrigin } from "@/lib/cors";
+import { clampPriority, dedupeLabels, detectPriorityFromPrompt } from "@/lib/priority";
 
 /**
  * Cloudflare Worker handler for the `/plan` endpoint.
@@ -654,45 +655,6 @@ function resolveListToolConfig(tools: Tool[], aliases: TodoistListToolAlias[]): 
 }
 
 /**
- * Scans the natural-language prompt for Todoist-style priority cues such as
- * `P1`, `priority 2`, or localized `优先级3` markers, then maps them to API values.
- */
-function detectPriorityFromPrompt(prompt: string) {
-  const normalized = prompt.toLowerCase();
-  const patterns = [/(?:^|[^a-z0-9])p\s*([0-4])/, /priority\s*([0-4])/, /优先级\s*([0-4])/];
-  for (const pattern of patterns) {
-    const match = normalized.match(pattern);
-    if (match?.[1]) {
-      const priority = mapPriorityCueToApi(match[1]);
-      if (priority) {
-        return priority;
-      }
-    }
-  }
-  return undefined;
-}
-
-/**
- * Converts UI-facing `P{n}` shorthand into Todoist REST priorities where 4 is the
- * highest urgency (P1) and 1 is the lowest (P4).
- */
-function mapPriorityCueToApi(signal: string) {
-  switch (signal) {
-    case "0":
-    case "1":
-      return 4;
-    case "2":
-      return 3;
-    case "3":
-      return 2;
-    case "4":
-      return 1;
-    default:
-      return undefined;
-  }
-}
-
-/**
  * Performs a simple keyword match between the prompt and the downloaded project
  * catalog so the planner can suggest a default `projectId` even before AI runs.
  */
@@ -936,13 +898,6 @@ function normalizeTask(
   };
 }
 
-function clampPriority(priority?: number) {
-  if (priority === undefined) {
-    return undefined;
-  }
-  return Math.min(4, Math.max(1, Math.round(priority)));
-}
-
 function mapApiPriorityToUiFlag(priority: number) {
   const normalized = clampPriority(priority) ?? 1;
   const uiLevel = 5 - normalized;
@@ -992,26 +947,6 @@ function resolveProjectReference(task: PlannedTask, context: TodoistMetadata, in
     return { id: undefined, name: normalized };
   }
   return inferred || undefined;
-}
-
-function dedupeLabels(labels?: string[]) {
-  if (!labels?.length) {
-    return undefined;
-  }
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const label of labels) {
-    const trimmed = label.trim();
-    if (!trimmed || seen.has(trimmed.toLowerCase())) {
-      continue;
-    }
-    seen.add(trimmed.toLowerCase());
-    result.push(trimmed);
-    if (result.length === 5) {
-      break;
-    }
-  }
-  return result.length ? result : undefined;
 }
 
 function selectDue(fromTask?: PlannedTask["due"], fallback?: string) {

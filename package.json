@@ -11,6 +11,9 @@
 		"start": "next start",
 		"prelint": "pnpm cf-typegen",
 		"lint": "eslint .",
+		"pretest": "pnpm cf-typegen",
+		"test": "vitest run",
+		"test:watch": "vitest",
 		"predeploy": "pnpm cf-typegen",
 		"deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
 		"prepreview": "pnpm cf-typegen",
@@ -42,6 +45,7 @@
 		"eslint": "^9.39.4",
 		"eslint-config-next": "16.2.3",
 		"typescript": "^5.9.3",
+		"vitest": "^4.1.5",
 		"wrangler": "^4.81.1"
 	}
 }
