@@ -20,7 +20,7 @@ pnpm run cf-typegen   # Regenerate cloudflare-env.d.ts from wrangler.jsonc bindi
 - **Two-pass AI pipeline**: intent classification (`gpt-oss-120b`, reasoning high) then task planning (`gpt-oss-20b`, reasoning medium)
 - **Streaming**: `application/x-ndjson` with event types: `status`, `ai.plan`, `todoist.task`, `final`, `error`
 - **MCP integration**: Todoist via `StreamableHTTPClientTransport` with dynamic tool discovery and fallback aliases
-- **Auth**: HTTP Basic Auth in `src/middleware.ts` using `timingSafeEqual`
+- **Auth**: HTTP Basic Auth in `src/proxy.ts` using a Web Crypto SHA-256 constant-time compare (the file is the Next.js 16 successor to `middleware.ts`)
 - **URL rewrite**: `/plan` rewrites to `/api/plan` in `next.config.ts`; `/transcribe` is called directly at `/api/transcribe`
 
 ## Required Environment Variables

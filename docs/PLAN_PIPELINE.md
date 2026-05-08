@@ -25,7 +25,7 @@
 4. **Task generation**: Based on the scenario, the Worker calls `@cf/openai/gpt-oss-20b` (reasoning effort `medium`) with a tailored prompt segment, max-task cap, and JSON schema constraint. The Worker also passes along any explicit priority hints (for example `P0/P1` map to Todoist priority `4`, `P2` → `3`, `P3` → `2`, everything else → `1`). The result flows through the normalization + Todoist MCP sync, which now sets `project_id` whenever a valid project match was found.
 
 ## Voice transcription endpoint
-- **Endpoint**: `POST /transcribe` (internal helper used by the SPA; protected by the same Basic Auth middleware).
+- **Endpoint**: `POST /transcribe` (internal helper used by the SPA; protected by the same Basic Auth proxy in `src/proxy.ts`).
 - **Body**:
   ```json
   {
