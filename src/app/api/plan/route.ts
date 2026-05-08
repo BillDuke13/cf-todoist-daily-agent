@@ -25,11 +25,11 @@ const MAX_TASKS = 10;
 const MAX_PLAN_REQUEST_BYTES = 64 * 1024;
 
 const requestSchema = z.object({
-  prompt: z.string().min(1, "Prompt is required"),
-  timezone: z.string().min(3).optional(),
-  due: z.string().min(3).optional(),
-  preferences: z.string().min(1).optional(),
-  labels: z.array(z.string().min(1)).max(5).optional(),
+  prompt: z.string().min(1, "Prompt is required").max(8192),
+  timezone: z.string().min(3).max(64).optional(),
+  due: z.string().min(3).max(256).optional(),
+  preferences: z.string().min(1).max(2048).optional(),
+  labels: z.array(z.string().min(1).max(64)).max(5).optional(),
   priority: z.number().int().min(1).max(4).optional(),
   maxTasks: z.number().int().min(MIN_TASKS).max(MAX_TASKS).default(5),
 });
