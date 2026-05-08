@@ -50,6 +50,22 @@ curl -u "$BASIC_AUTH_USER:$BASIC_AUTH_PASS" \
      http://127.0.0.1:8787/plan
 ```
 
+## Generated Types
+`cloudflare-env.d.ts` is produced by `wrangler types` from `wrangler.jsonc` and is intentionally **not committed**. Package scripts wire `pnpm cf-typegen` into every common entry point so a normal `pnpm install` followed by any of `pnpm dev`, `pnpm lint`, `pnpm build`, `pnpm preview`, or `pnpm run deploy` materializes the file for you:
+
+| Trigger | Hook |
+| --- | --- |
+| `pnpm install` | `postinstall` |
+| `pnpm dev` | `predev` |
+| `pnpm lint` | `prelint` |
+| `pnpm build` | `prebuild` |
+| `pnpm preview` | `prepreview` |
+| `pnpm run deploy` | `predeploy` |
+
+If you bypass scripts — for example `pnpm install --ignore-scripts` in a CI image, or a Docker build that skips `devDependencies` (so `wrangler` is absent) — `cloudflare-env.d.ts` will be missing and `pnpm exec tsc --noEmit` (which has no wrapper) will surface precise `Property '<NAME>' does not exist on type 'CloudflareEnv'` errors. Run `pnpm cf-typegen` once to fix it. The opaque `TS2688: Cannot find type definition file` was retired so missing-types failures are now actionable.
+
+For Docker `--prod` images, either keep `wrangler` available during the build (so `postinstall` succeeds) or pass `pnpm install --ignore-scripts` and run `pnpm cf-typegen` explicitly in a stage that has `wrangler`.
+
 ## Deployment
 ```bash
 pnpm run deploy   # Builds with opennextjs-cloudflare and runs `wrangler deploy`
