@@ -54,6 +54,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "413":
+          description: Request body exceeds the 64KB cap enforced before JSON parsing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /transcribe:
     options:
       summary: Preflight request
@@ -109,24 +115,37 @@ components:
       additionalProperties: false
       required:
         - prompt
+      description: |
+        The Worker rejects request bodies larger than 64KB before parsing. The per-field
+        bounds below mirror the server-side Zod schema and are enforced after JSON parsing.
       properties:
         prompt:
           type: string
+          minLength: 1
+          maxLength: 8192
           description: Natural language description of what should be planned for the day.
         due:
           type: string
+          minLength: 3
+          maxLength: 256
           description: Natural language deadline (for example “today before 6pm”).
         timezone:
           type: string
+          minLength: 3
+          maxLength: 64
           description: IANA timezone name used when the model generates natural language due strings.
         preferences:
           type: string
+          minLength: 1
+          maxLength: 2048
           description: Additional constraints, focus blocks, or other hints for the planner.
         labels:
           type: array
           maxItems: 5
           items:
             type: string
+            minLength: 1
+            maxLength: 64
           description: Default Todoist labels to apply to every generated task unless overridden by the model.
         priority:
           type: integer
