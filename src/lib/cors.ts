@@ -47,14 +47,17 @@ export function buildCorsHeaders(origin: string, extra?: Record<string, string>)
   // SECURITY_HEADERS is folded in here so every response that flows through a
   // route handler (including the streaming `new Response(stream)` path that
   // bypasses NextResponse.next()) carries the same hardening baseline as the
-  // ones middleware sets on page routes.
+  // ones middleware sets on page routes. SECURITY_HEADERS is spread LAST so
+  // callers' `extra` can set headers like Content-Type or Cache-Control but
+  // can never accidentally weaken the security baseline (e.g. by passing
+  // X-Frame-Options: SAMEORIGIN).
   return {
-    ...SECURITY_HEADERS,
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "OPTIONS, POST",
     "Access-Control-Allow-Headers": "content-type",
     Vary: "Origin",
     ...extra,
+    ...SECURITY_HEADERS,
   };
 }
 

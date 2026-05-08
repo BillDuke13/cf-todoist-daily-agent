@@ -20,6 +20,9 @@ const INTENT_MODEL_ID = "@cf/openai/gpt-oss-120b";
 const PLAN_MODEL_ID = "@cf/openai/gpt-oss-20b";
 const MIN_TASKS = 1;
 const MAX_TASKS = 10;
+// Plans only carry short prompts and a few JSON fields; 64KB is a generous
+// upper bound that still rejects accidental log dumps or pasted documents.
+const MAX_PLAN_REQUEST_BYTES = 64 * 1024;
 
 const requestSchema = z.object({
   prompt: z.string().min(1, "Prompt is required"),
@@ -338,6 +341,11 @@ export async function POST(request: NextRequest) {
       return forbidden();
     }
     throw error;
+  }
+
+  const declaredLength = Number.parseInt(request.headers.get("content-length") ?? "", 10);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_PLAN_REQUEST_BYTES) {
+    return jsonError("Request body exceeds the maximum size of 64KB", origin, 413);
   }
 
   const body = await parseJson(request);

@@ -3,6 +3,7 @@
 	"version": "0.1.0",
 	"private": true,
 	"scripts": {
+		"postinstall": "pnpm cf-typegen",
 		"dev": "next dev --turbopack",
 		"prebuild": "pnpm cf-typegen",
 		"build": "next build --webpack",
