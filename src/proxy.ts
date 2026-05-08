@@ -5,12 +5,12 @@ import { SECURITY_HEADERS, parseAllowedOrigins } from "@/lib/cors";
 
 const REALM = "Todoist Daily Agent";
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { env } = getCloudflareContext();
 
   // CORS preflight requests cannot carry an Authorization header (Fetch spec),
   // so they must bypass Basic Auth. Defense-in-depth: pre-validate Origin in
-  // the middleware itself so any future route that forgets to call
+  // the proxy itself so any future route that forgets to call
   // resolveOrigin() cannot be probed cross-origin via OPTIONS.
   if (request.method === "OPTIONS") {
     const allowedOrigins = parseAllowedOrigins(env.FRONTEND_ORIGIN);
