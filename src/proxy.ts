@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { decodeBasicCredentials, safeEqual } from "@/lib/auth";
 import { SECURITY_HEADERS, parseAllowedOrigins } from "@/lib/cors";
 
 const REALM = "Todoist Daily Agent";
@@ -67,45 +68,6 @@ function unauthorized() {
       ...SECURITY_HEADERS,
     },
   });
-}
-
-// Decode base64 to a UTF-8 string using only Web standards. We avoid Node's
-// Buffer because `node:buffer` is unresolvable by webpack during the OpenNext
-// production build (UnhandledSchemeError on the `node:` URI scheme).
-function decodeBasicCredentials(encoded: string) {
-  const binary = atob(encoded);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-}
-
-// Hash both inputs to a fixed-length digest so the comparison cost no longer
-// branches on the attacker-controlled input length. We use Web Crypto rather
-// than node:crypto because the latter is unresolvable by webpack during the
-// OpenNext production build, which would block deploys.
-async function safeEqual(a: string, b: string) {
-  const encoder = new TextEncoder();
-  const [digestA, digestB] = await Promise.all([
-    crypto.subtle.digest("SHA-256", encoder.encode(a)),
-    crypto.subtle.digest("SHA-256", encoder.encode(b)),
-  ]);
-  return constantTimeEqual(new Uint8Array(digestA), new Uint8Array(digestB));
-}
-
-// SHA-256 always produces 32-byte digests, so the length check is a sanity
-// net rather than a leak. The XOR-OR loop visits every byte regardless of
-// where the first mismatch occurs, keeping the comparison constant-time.
-function constantTimeEqual(a: Uint8Array, b: Uint8Array) {
-  if (a.length !== b.length) {
-    return false;
-  }
-  let mismatch = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    mismatch |= a[i] ^ b[i];
-  }
-  return mismatch === 0;
 }
 
 function withSecurityHeaders(response: NextResponse) {
