@@ -1,24 +1,8 @@
-/**
- * HTTP Basic Auth helpers extracted from src/proxy.ts so they can be
- * unit-tested without spinning up the Next.js proxy harness.
- *
- * The implementation is intentionally Web-Crypto-only: webpack cannot
- * resolve the `node:crypto` or `node:buffer` schemes during the OpenNext
- * production build, so the proxy must stay free of Node-specific
- * imports.
- *
- * @internal Public only for the proxy and its test suite.
- */
+// Web-Crypto-only on purpose: webpack cannot resolve `node:crypto`/`node:buffer`
+// during the OpenNext production build, so the proxy must avoid Node imports.
+// @internal Public only for the proxy and its test suite.
 
-/**
- * Decode a base64-encoded "user:password" payload to a UTF-8 string.
- * Mirrors the behavior of `Buffer.from(s, "base64").toString("utf8")`
- * without pulling in `node:buffer`.
- *
- * Throws when the input is not valid base64 (atob raises
- * `InvalidCharacterError`); the caller is expected to translate that
- * into a 401 Unauthorized response.
- */
+// Throws InvalidCharacterError on malformed base64; callers translate that to 401.
 export function decodeBasicCredentials(encoded: string) {
   const binary = atob(encoded);
   const bytes = new Uint8Array(binary.length);
@@ -28,12 +12,8 @@ export function decodeBasicCredentials(encoded: string) {
   return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
 }
 
-/**
- * Hash both inputs to a fixed-length SHA-256 digest and compare them in
- * constant time. The digest funnel collapses both the attacker-controlled
- * and server-controlled lengths to 32 bytes, removing length-based
- * timing leaks before the comparison even starts.
- */
+// Hashing both sides funnels variable-length inputs into a fixed 32-byte
+// digest before the constant-time compare, eliminating length-based timing leaks.
 export async function safeEqual(a: string, b: string) {
   const encoder = new TextEncoder();
   const [digestA, digestB] = await Promise.all([
@@ -43,12 +23,8 @@ export async function safeEqual(a: string, b: string) {
   return constantTimeEqual(new Uint8Array(digestA), new Uint8Array(digestB));
 }
 
-/**
- * Compare two byte arrays in constant time. SHA-256 always yields
- * 32-byte digests, so the length check is a sanity net rather than a
- * leak. The XOR-OR loop visits every byte regardless of where the first
- * mismatch occurs.
- */
+// XOR-OR over every byte ensures the runtime is independent of where the first
+// mismatch occurs. The length guard is a sanity net since both inputs are 32 bytes.
 export function constantTimeEqual(a: Uint8Array, b: Uint8Array) {
   if (a.length !== b.length) {
     return false;

@@ -65,10 +65,6 @@ const defaultTimezone =
 const MAX_AUTOMATED_TASKS = 6;
 const VOICE_TIMEOUT_MS = 60_000;
 
-/**
- * Primary SPA surface that submits prompts to `/plan`, renders streamed NDJSON events,
- * and offers a short voice capture UX backed by `/api/transcribe`.
- */
 export default function Home() {
   const [events, setEvents] = useState<PlannerEvent[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -119,10 +115,6 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /**
-   * Posts the prompt to `/plan`, incrementally decodes NDJSON chunks, and feeds the
-   * resulting events into local state so the timeline updates as soon as data arrives.
-   */
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     abortControllerRef.current?.abort();
@@ -160,7 +152,6 @@ export default function Home() {
       const decoder = new TextDecoder();
       let buffer = "";
 
-      // Read one chunk at a time so the UI can react between NDJSON lines.
       while (true) {
         const { value, done } = await reader.read();
         if (done) {
@@ -191,11 +182,6 @@ export default function Home() {
     setIsStreaming(false);
   }
 
-  /**
-   * Toggles the MediaRecorder session, streams microphone data into memory, and hands
-   * the base64 clip to `/api/transcribe` so the resulting text can immediately reuse
-   * the regular submission path.
-   */
   async function handleVoiceButton() {
     if (isRecording) {
       stopRecording();
@@ -501,10 +487,6 @@ function buildPayload(promptValue: string) {
   return payload;
 }
 
-/**
- * Consumes newline-delimited chunks from the streaming buffer and forwards each line
- * to the provided callback while returning whatever partial line remains.
- */
 function flushLines(buffer: string, onLine: (line: string) => void) {
   let remaining = buffer;
   while (true) {
@@ -521,11 +503,8 @@ function flushLines(buffer: string, onLine: (line: string) => void) {
   return remaining;
 }
 
-/**
- * Parses a single NDJSON line and appends it to the planner timeline. Invalid lines
- * are ignored so the UI never crashes on unexpected debug payloads.
- */
 function enqueueEvent(line: string, setEvents: Dispatch<SetStateAction<PlannerEvent[]>>) {
+  // Swallow malformed lines so an unexpected debug payload cannot crash the timeline.
   try {
     const parsed = JSON.parse(line) as PlannerEvent;
     setEvents((current) => [...current, parsed]);
