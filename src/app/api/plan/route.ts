@@ -7,12 +7,9 @@ import { z } from "zod";
 import { OriginNotAllowedError, buildCorsHeaders, forbidden, resolveOrigin } from "@/lib/cors";
 import { clampPriority, dedupeLabels, detectPriorityFromPrompt } from "@/lib/priority";
 
-/**
- * Cloudflare Worker handler for the `/plan` endpoint.
- * The module orchestrates origin validation, Workers AI intent + planning passes,
- * Todoist MCP metadata discovery, and streaming NDJSON responses.
- * The behavior is documented in `docs/PLAN_PIPELINE.md` and `openapi/plan.yaml`.
- */
+// Behavior contract: docs/PLAN_PIPELINE.md and openapi/plan.yaml.
+// Anything user-visible that this file changes (event types, error semantics,
+// payload shape) must also update those two files in the same PR.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -304,10 +301,6 @@ const intentJsonSchema = {
   },
 } as const;
 
-/**
- * Mirrors the single allowed `FRONTEND_ORIGIN` during CORS preflight checks so browsers
- * can stream `/plan` without guessing headers. Every invalid origin receives a 403 early.
- */
 export async function OPTIONS(request: NextRequest) {
   const { env } = getCloudflareContext();
   let origin: string;
@@ -327,11 +320,6 @@ export async function OPTIONS(request: NextRequest) {
   });
 }
 
-/**
- * Streams a newline-delimited JSON response that walks through intent detection,
- * scenario-specific planning, Todoist metadata discovery, and MCP task creation.
- * Each major stage emits progress events so the UI can surface granular status.
- */
 export async function POST(request: NextRequest) {
   const { env } = getCloudflareContext();
   let origin: string;
@@ -468,9 +456,8 @@ export async function POST(request: NextRequest) {
           controller.close();
         } catch (error) {
           console.error("/plan failed", error);
-          // Only echo internal error text to the client when DEBUG_EVENTS is on.
-          // Production keeps the response opaque to avoid leaking stack traces,
-          // upstream MCP messages, or AI provider errors through the UI.
+          // Production keeps the error opaque so stack traces, MCP responses, and AI
+          // provider messages cannot reach the UI. Echo only when DEBUG_EVENTS=true.
           const detail =
             debugEnabled && error instanceof Error ? error.message.slice(0, 500) : undefined;
           send({
@@ -499,10 +486,6 @@ export async function POST(request: NextRequest) {
   });
 }
 
-/**
- * Executes the scenario-specific planning pass with Workers AI and normalizes the
- * resulting tasks so downstream Todoist calls always receive bounded arrays.
- */
 async function generatePlan(
   env: CloudflareEnv,
   input: PlanRequestBody,
@@ -547,10 +530,6 @@ async function generatePlan(
   };
 }
 
-/**
- * Discovers the latest Todoist projects/labels by inspecting whatever metadata
- * tools the MCP exposes (official or legacy). Missing metadata degrades gracefully.
- */
 async function fetchTodoistMetadata(client: Client | null, tools?: Tool[]) {
   if (!client || !tools?.length) {
     return { projects: [], labels: [] };
@@ -568,7 +547,7 @@ async function fetchTodoistMetadata(client: Client | null, tools?: Tool[]) {
     ? (projects as Array<{ id: string; name: string; is_inbox_project?: boolean; inbox_project?: boolean; isInbox?: boolean }>).map((project) => ({
         id: project.id,
         name: project.name,
-        // Check multiple possible field names for inbox detection
+        // Different MCP variants ship inconsistent inbox flags; fall back to the literal name.
         isInbox: Boolean(project.is_inbox_project || project.inbox_project || project.isInbox) || project.name?.toLowerCase() === "inbox",
       }))
     : [];
@@ -581,10 +560,6 @@ async function fetchTodoistMetadata(client: Client | null, tools?: Tool[]) {
   return { projects: projectSummaries, labels: labelSummaries };
 }
 
-/**
- * Invokes the resolved list tool and extracts array payloads regardless of which
- * envelope (`projects`, `items`, `structuredContent`, etc.) the MCP server used.
- */
 async function callTodoistListTool(client: Client, config: TodoistListToolConfig) {
   try {
     const response = await client.callTool({
@@ -630,10 +605,6 @@ function pluckArray(value: unknown, keys: string[]): unknown[] | undefined {
   return undefined;
 }
 
-/**
- * Attempts to match the available MCP tools against known aliases/keywords so the
- * Worker can adapt whenever Todoist renames their discovery endpoints.
- */
 function resolveListToolConfig(tools: Tool[], aliases: TodoistListToolAlias[]): TodoistListToolConfig | null {
   for (const alias of aliases) {
     let matched: Tool | undefined;
@@ -654,10 +625,6 @@ function resolveListToolConfig(tools: Tool[], aliases: TodoistListToolAlias[]): 
   return null;
 }
 
-/**
- * Performs a simple keyword match between the prompt and the downloaded project
- * catalog so the planner can suggest a default `projectId` even before AI runs.
- */
 function inferProjectFromPrompt(prompt: string, context: TodoistMetadata) {
   if (!context.projects.length) {
     return null;
@@ -666,10 +633,6 @@ function inferProjectFromPrompt(prompt: string, context: TodoistMetadata) {
   return context.projects.find((project) => normalizedPrompt.includes(project.name.toLowerCase()) && !project.isInbox) ?? null;
 }
 
-/**
- * Mirrors `inferProjectFromPrompt` for labels to provide soft defaults whenever
- * the user explicitly references an existing tag in natural language.
- */
 function inferLabelsFromPrompt(prompt: string, context: TodoistMetadata) {
   if (!context.labels.length) {
     return undefined;
@@ -681,10 +644,6 @@ function inferLabelsFromPrompt(prompt: string, context: TodoistMetadata) {
   return matches.length ? matches : undefined;
 }
 
-/**
- * Runs the lightweight intent classifier so downstream prompts can tailor their
- * directives (for example `single_reminder` vs `multi_step_plan`).
- */
 async function classifyIntent(env: CloudflareEnv, input: PlanRequestBody): Promise<IntentDecision> {
   const ai = env.AI as unknown as {
     run: (model: string, payload: Record<string, unknown>) => Promise<unknown>;
@@ -973,11 +932,6 @@ function selectDue(fromTask?: PlannedTask["due"], fallback?: string) {
   return undefined;
 }
 
-/**
- * Pushes each normalized task to Todoist via the resolved MCP tool and mirrors
- * progress through streamed `todoist.task` events. Supports both single and bulk
- * `add-task(s)` variants and ensures priority + project fields match the schema.
- */
 async function syncWithTodoist(
   client: Client,
   tasks: NormalizedTask[],
@@ -1035,10 +989,6 @@ async function syncWithTodoist(
   return results;
 }
 
-/**
- * Maps internal task fields to the shape expected by Todoist MCP. Some servers use
- * `projectId` while others expect `project_id`, so both are populated defensively.
- */
 function toTodoistArgs(task: NormalizedTask, input: PlanRequestBody, options: { priorityStyle: "number" | "string" } = { priorityStyle: "number" }) {
   const payload: Record<string, unknown> = {
     content: task.title,
@@ -1054,7 +1004,7 @@ function toTodoistArgs(task: NormalizedTask, input: PlanRequestBody, options: { 
     payload.labels = task.labels;
   }
   if (task.projectId) {
-    // Try both field names to support different MCP implementations
+    // Official MCP uses snake_case; legacy/community servers expect camelCase. Send both.
     payload.projectId = task.projectId;
     payload.project_id = task.projectId;
   }
@@ -1073,11 +1023,6 @@ function toTodoistArgs(task: NormalizedTask, input: PlanRequestBody, options: { 
   return payload;
 }
 
-/**
- * Selects the appropriate Todoist creation tool by checking the preferred list first
- * and then falling back to whatever MCP exposed. This keeps the Worker resilient to
- * future tool renames without hard failing on unexpected catalogs.
- */
 async function resolveToolName(client: Client, url: URL, token: string, availableTools?: Tool[]) {
   if (!token) {
     throw new Error("TODOIST_TOKEN is required to contact the MCP server");
@@ -1298,6 +1243,9 @@ function jsonError(message: string, origin: string, status = 400) {
   });
 }
 
+// `wrangler types` narrows DEBUG_EVENTS to the literal `"false"` from
+// `wrangler.jsonc#vars`. The cast through `unknown` lets `wrangler secret put`
+// override the value at runtime without TypeScript fighting the literal.
 function isDebugEnabled(env: CloudflareEnv) {
   return (env as unknown as { DEBUG_EVENTS?: string }).DEBUG_EVENTS === "true";
 }

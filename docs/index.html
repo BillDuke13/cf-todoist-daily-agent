@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Todoist Daily Agent — Product Overview</title>
+    <meta
+      name="description"
+      content="A Cloudflare Worker that turns a single natural-language prompt into a focused Todoist plan via Workers AI and the Todoist MCP."
+    />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --bg-muted: #f5f6fa;
+        --fg: #111315;
+        --fg-muted: #4a4f55;
+        --border: #e2e5ea;
+        --accent: #d8001a;
+        --accent-soft: #fde7ea;
+        --code-bg: #0f1115;
+        --code-fg: #f5f7fa;
+        --shadow: 0 1px 2px rgba(15, 17, 21, 0.06), 0 8px 24px rgba(15, 17, 21, 0.08);
+        --radius: 14px;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0f1115;
+          --bg-muted: #161a20;
+          --fg: #f5f7fa;
+          --fg-muted: #b6bcc6;
+          --border: #262b34;
+          --accent: #ff5566;
+          --accent-soft: #2a1014;
+          --code-bg: #060709;
+          --code-fg: #f5f7fa;
+          --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.5);
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue",
+          Arial, "Noto Sans", sans-serif;
+        font-size: 16px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      a {
+        color: var(--accent);
+        text-decoration: none;
+        border-bottom: 1px solid transparent;
+      }
+
+      a:hover,
+      a:focus {
+        border-bottom-color: var(--accent);
+      }
+
+      header.site {
+        padding: 4rem 1.5rem 2.5rem;
+        border-bottom: 1px solid var(--border);
+        background: linear-gradient(180deg, var(--bg-muted), var(--bg));
+      }
+
+      header.site .container {
+        max-width: 960px;
+        margin: 0 auto;
+      }
+
+      header.site .eyebrow {
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--fg-muted);
+        margin-bottom: 0.75rem;
+      }
+
+      header.site h1 {
+        font-size: clamp(2rem, 4vw, 2.75rem);
+        line-height: 1.2;
+        margin: 0 0 1rem;
+      }
+
+      header.site p.lede {
+        font-size: 1.15rem;
+        color: var(--fg-muted);
+        max-width: 720px;
+        margin: 0 0 1.5rem;
+      }
+
+      .badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 1.25rem;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        background: var(--accent-soft);
+        color: var(--accent);
+        padding: 0.3rem 0.7rem;
+        border-radius: 999px;
+        font-size: 0.85rem;
+        font-weight: 600;
+      }
+
+      main {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 3rem 1.5rem 5rem;
+      }
+
+      section {
+        margin-bottom: 3rem;
+      }
+
+      h2 {
+        font-size: 1.55rem;
+        margin: 0 0 1rem;
+        line-height: 1.25;
+      }
+
+      h3 {
+        font-size: 1.1rem;
+        margin: 1.5rem 0 0.5rem;
+        color: var(--fg);
+      }
+
+      p {
+        color: var(--fg-muted);
+        margin: 0 0 1rem;
+      }
+
+      ul,
+      ol {
+        color: var(--fg-muted);
+        padding-left: 1.25rem;
+        margin: 0 0 1rem;
+      }
+
+      ul li,
+      ol li {
+        margin-bottom: 0.4rem;
+      }
+
+      .callout {
+        border: 1px solid var(--border);
+        background: var(--bg-muted);
+        border-radius: var(--radius);
+        padding: 1.25rem 1.5rem;
+        box-shadow: var(--shadow);
+      }
+
+      .grid {
+        display: grid;
+        gap: 1rem;
+      }
+
+      @media (min-width: 720px) {
+        .grid.two {
+          grid-template-columns: repeat(2, 1fr);
+        }
+
+        .grid.three {
+          grid-template-columns: repeat(3, 1fr);
+        }
+      }
+
+      .card {
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1.25rem;
+        background: var(--bg);
+        box-shadow: var(--shadow);
+      }
+
+      .card h3 {
+        margin-top: 0;
+      }
+
+      .card p {
+        margin-bottom: 0;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1rem 0;
+        font-size: 0.95rem;
+      }
+
+      th,
+      td {
+        padding: 0.6rem 0.75rem;
+        border-bottom: 1px solid var(--border);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        font-weight: 600;
+        color: var(--fg);
+      }
+
+      td {
+        color: var(--fg-muted);
+      }
+
+      code,
+      pre {
+        font-family:
+          "SF Mono", Menlo, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 0.92em;
+      }
+
+      :not(pre) > code {
+        background: var(--bg-muted);
+        padding: 0.1rem 0.35rem;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+      }
+
+      pre {
+        background: var(--code-bg);
+        color: var(--code-fg);
+        border-radius: var(--radius);
+        padding: 1rem 1.25rem;
+        overflow-x: auto;
+        line-height: 1.5;
+        font-size: 0.88rem;
+      }
+
+      pre code {
+        background: transparent;
+        padding: 0;
+        border: 0;
+      }
+
+      .timeline {
+        list-style: none;
+        padding: 0;
+        margin: 1rem 0;
+        counter-reset: step;
+      }
+
+      .timeline li {
+        position: relative;
+        padding: 1rem 1rem 1rem 3.25rem;
+        margin-bottom: 0.75rem;
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        background: var(--bg);
+        counter-increment: step;
+      }
+
+      .timeline li::before {
+        content: counter(step);
+        position: absolute;
+        top: 1rem;
+        left: 1rem;
+        width: 1.75rem;
+        height: 1.75rem;
+        border-radius: 50%;
+        background: var(--accent);
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 0.9rem;
+      }
+
+      footer.site {
+        border-top: 1px solid var(--border);
+        padding: 2rem 1.5rem;
+        text-align: center;
+        font-size: 0.9rem;
+        color: var(--fg-muted);
+      }
+
+      .nowrap {
+        white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site">
+      <div class="container">
+        <p class="eyebrow">Todoist Daily Agent</p>
+        <h1>Plan a focused day from a single sentence</h1>
+        <p class="lede">
+          Type or speak what you want to get done. The agent decides whether
+          you asked for a reminder, a multi-step plan, or a meal plan, then
+          pushes the resulting tasks straight into your Todoist account
+          through the Model Context Protocol — all on Cloudflare's edge.
+        </p>
+        <div class="badges">
+          <span class="badge">Cloudflare Workers</span>
+          <span class="badge">Workers AI</span>
+          <span class="badge">Next.js 16</span>
+          <span class="badge">Todoist MCP</span>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section id="what-it-does">
+        <h2>What it does</h2>
+        <p>
+          The Todoist Daily Agent turns one natural-language prompt into a
+          short, well-shaped task list inside Todoist. There is no manual
+          form to fill in, no priority dropdown to remember — the assistant
+          maps everything (title, description, priority, project, labels,
+          due time) to the public Todoist schema for you and pushes it
+          through the official Todoist Model Context Protocol endpoint.
+        </p>
+        <div class="grid two">
+          <div class="card">
+            <h3>One textarea, one click</h3>
+            <p>
+              Describe what you want to plan. The browser detects your
+              timezone, the worker validates the request, and the streaming
+              UI surfaces every step (intent, plan, Todoist sync) as it
+              happens.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Voice in, plan out</h3>
+            <p>
+              Tap <strong>Use voice input</strong> to record up to 60
+              seconds. Whisper Large v3 Turbo transcribes the clip,
+              overwrites the prompt, and submits the plan in a single
+              motion.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Intent-aware planning</h3>
+            <p>
+              Asking for a reminder yields one task. Asking for a meal plan
+              yields meals across the days you mentioned. Asking for a
+              multi-step day yields ordered steps with time anchors.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Edge-first runtime</h3>
+            <p>
+              Authentication, AI inference, and Todoist MCP traffic all run
+              on Cloudflare's network. There is no separate API server — the
+              Worker is the API.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="how-it-works">
+        <h2>How a request flows</h2>
+        <ol class="timeline">
+          <li>
+            <strong>You describe your day.</strong> The single dialog on the
+            home page captures one prompt and your timezone, then POSTs to
+            <code>/plan</code>.
+          </li>
+          <li>
+            <strong>Intent classification.</strong> Workers AI runs
+            <code>@cf/openai/gpt-oss-120b</code> at high reasoning effort to
+            decide whether you asked for a single reminder, a multi-step
+            plan, a recipe plan, or a general plan.
+          </li>
+          <li>
+            <strong>Todoist metadata discovery.</strong> The worker connects
+            to the Todoist MCP server, lists its tools, and pulls the live
+            catalog of projects and labels so the model only references
+            real ones.
+          </li>
+          <li>
+            <strong>Task generation.</strong>
+            <code>@cf/openai/gpt-oss-20b</code> produces a JSON-schema
+            constrained plan, tailored to the detected scenario, with
+            properly mapped priorities (Todoist's <code>4 = P1</code>
+            convention is handled for you).
+          </li>
+          <li>
+            <strong>Todoist sync.</strong> Each task is pushed through the
+            MCP <code>add-task</code> or <code>add-tasks</code> tool. The
+            UI streams a status badge per task (<em>pending</em>,
+            <em>created</em>, or <em>failed</em>) and a final summary with
+            counts and elapsed time.
+          </li>
+        </ol>
+      </section>
+
+      <section id="endpoints">
+        <h2>Endpoints at a glance</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Method &amp; path</th>
+              <th>Purpose</th>
+              <th>Format</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="nowrap"><code>POST /plan</code></td>
+              <td>Generate a plan and push it into Todoist.</td>
+              <td>NDJSON stream of typed events.</td>
+            </tr>
+            <tr>
+              <td class="nowrap"><code>OPTIONS /plan</code></td>
+              <td>CORS preflight.</td>
+              <td><code>204 No Content</code>.</td>
+            </tr>
+            <tr>
+              <td class="nowrap"><code>POST /api/transcribe</code></td>
+              <td>Transcribe a short voice clip used as the prompt.</td>
+              <td>JSON <code>{ text, language? }</code>.</td>
+            </tr>
+            <tr>
+              <td class="nowrap"><code>OPTIONS /api/transcribe</code></td>
+              <td>CORS preflight.</td>
+              <td><code>204 No Content</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          The full request and response schemas — including the streaming
+          event contract — live in
+          <a href="../openapi/plan.yaml"><code>openapi/plan.yaml</code></a>.
+        </p>
+      </section>
+
+      <section id="getting-started">
+        <h2>Getting started</h2>
+        <p>You need a Cloudflare account with Workers AI enabled and a Todoist token approved for the MCP beta. Then:</p>
+        <pre><code>pnpm install
+# create .dev.vars at the repo root with the secrets listed below
+pnpm preview                     # OpenNext build + Wrangler preview</code></pre>
+        <p>
+          For day-to-day frontend tweaks <code>pnpm dev</code> is faster,
+          but it cannot reach Workers AI or Todoist MCP. Use
+          <code>pnpm preview</code> (or <code>wrangler dev</code>) when you
+          want the full integration.
+        </p>
+        <h3>Required secrets</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>What it does</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="nowrap"><code>BASIC_AUTH_USER</code></td>
+              <td>Username for the HTTP Basic Auth gate in <code>src/proxy.ts</code>.</td>
+            </tr>
+            <tr>
+              <td class="nowrap"><code>BASIC_AUTH_PASS</code></td>
+              <td>Password for the same gate.</td>
+            </tr>
+            <tr>
+              <td class="nowrap"><code>TODOIST_TOKEN</code></td>
+              <td>Bearer token for the Todoist MCP server.</td>
+            </tr>
+            <tr>
+              <td class="nowrap"><code>TODOIST_MCP_URL</code></td>
+              <td>MCP endpoint. Defaults to <code>https://ai.todoist.net/mcp</code>.</td>
+            </tr>
+            <tr>
+              <td class="nowrap"><code>FRONTEND_ORIGIN</code></td>
+              <td>One or more comma-separated origins allowed to reach <code>/plan</code> and <code>/api/transcribe</code>.</td>
+            </tr>
+            <tr>
+              <td class="nowrap"><code>DEBUG_EVENTS</code></td>
+              <td>Set to <code>"true"</code> to receive <code>debug.*</code> NDJSON lines and verbose error detail. Defaults to off.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="more">
+        <h2>Where to dig deeper</h2>
+        <div class="grid three">
+          <div class="card">
+            <h3>Pipeline reference</h3>
+            <p>
+              <a href="PLAN_PIPELINE.md"><code>docs/PLAN_PIPELINE.md</code></a>
+              — full architecture, MCP tool resolution, debug events,
+              verification steps.
+            </p>
+          </div>
+          <div class="card">
+            <h3>API contract</h3>
+            <p>
+              <a href="../openapi/plan.yaml"><code>openapi/plan.yaml</code></a>
+              — OpenAPI 3.1 spec for <code>/plan</code> and
+              <code>/api/transcribe</code>.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Repository</h3>
+            <p>
+              <a href="../README.md"><code>README.md</code></a> covers
+              install, deploy, observability, and licensing notes.
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site">
+      <p>Built for the Todoist MCP workflow on Cloudflare Workers · Apache 2.0</p>
+    </footer>
+  </body>
+</html>

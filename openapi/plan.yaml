@@ -48,6 +48,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: |
+            Missing or invalid HTTP Basic Auth credentials. Enforced by `src/proxy.ts`
+            before the route handler runs.
+          headers:
+            WWW-Authenticate:
+              description: Basic Auth challenge with realm `Todoist Daily Agent`.
+              schema:
+                type: string
         "403":
           description: Origin not authorized by `FRONTEND_ORIGIN`.
           content:
@@ -60,7 +69,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-  /transcribe:
+  /api/transcribe:
     options:
       summary: Preflight request
       description: Responds to browser preflight requests. Always returns 204 to signal the supported headers.
@@ -88,6 +97,21 @@ paths:
                 $ref: '#/components/schemas/TranscriptionResponse'
         "400":
           description: Invalid payload (missing audio or exceeding size limits).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: |
+            Missing or invalid HTTP Basic Auth credentials. Enforced by `src/proxy.ts`
+            before the route handler runs.
+          headers:
+            WWW-Authenticate:
+              description: Basic Auth challenge with realm `Todoist Daily Agent`.
+              schema:
+                type: string
+        "403":
+          description: Origin not authorized by `FRONTEND_ORIGIN`.
           content:
             application/json:
               schema:
@@ -299,6 +323,9 @@ components:
           type: integer
           minimum: 1
           maximum: 4
+          description: |
+            Todoist REST priority. `4` is the highest urgency (UI label P1) and `1`
+            is the lowest (UI label P4).
         labels:
           type: array
           items:
@@ -306,7 +333,7 @@ components:
         projectId:
           type: string
           description: Todoist project ID that the task should be created in.
-        project:
+        projectName:
           type: string
           description: Human-readable project name aligned with `projectId`.
         due:

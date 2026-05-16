@@ -31,12 +31,10 @@ export function resolveOrigin(request: NextRequest, allowed: string | undefined)
     throw new Error("FRONTEND_ORIGIN is not configured");
   }
   const requestOrigin = request.headers.get("origin");
-  // Threat model: cross-origin browser requests always carry Origin, so any
-  // CSRF probe that could ride on Basic Auth credentials will be caught by
-  // the mismatch branch below. An absent Origin means same-origin browser,
-  // server-to-server caller, or a privacy-stripped fetch — none of which a
-  // CORS check can meaningfully defend against once Basic Auth has cleared.
-  // Block only the genuinely mismatched case; mirror configured[0] otherwise.
+  // Cross-origin browser requests always carry Origin, so any CSRF probe that
+  // could ride Basic Auth lands in the mismatch branch. Absent Origin means
+  // same-origin / server-to-server / privacy-stripped fetch — CORS cannot
+  // defend those once Basic Auth cleared, so mirror configured[0] instead.
   if (requestOrigin && !configured.includes(requestOrigin)) {
     throw new OriginNotAllowedError();
   }
@@ -44,13 +42,9 @@ export function resolveOrigin(request: NextRequest, allowed: string | undefined)
 }
 
 export function buildCorsHeaders(origin: string, extra?: Record<string, string>) {
-  // SECURITY_HEADERS is folded in here so every response that flows through a
-  // route handler (including the streaming `new Response(stream)` path that
-  // bypasses NextResponse.next()) carries the same hardening baseline as the
-  // ones the proxy sets on page routes. SECURITY_HEADERS is spread LAST so
-  // callers' `extra` can set headers like Content-Type or Cache-Control but
-  // can never accidentally weaken the security baseline (e.g. by passing
-  // X-Frame-Options: SAMEORIGIN).
+  // Streaming responses bypass NextResponse.next(), so every route must inject
+  // SECURITY_HEADERS itself. Spreading them LAST makes callers' `extra` unable
+  // to weaken the baseline (e.g. an X-Frame-Options: SAMEORIGIN gets overridden).
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "OPTIONS, POST",

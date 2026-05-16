@@ -33,10 +33,6 @@ export async function OPTIONS(request: NextRequest) {
   });
 }
 
-/**
- * Accepts a base64 encoded WebM/Opus clip, enforces the 8MB guard rail, and relays it
- * to Workers AI Whisper so the front-end can reuse the transcript as a regular prompt.
- */
 export async function POST(request: NextRequest) {
   const { env } = getCloudflareContext();
   let origin: string;
@@ -113,7 +109,6 @@ function errorResponse(message: string, origin: string, status: number) {
   });
 }
 
-/** Gracefully handles malformed JSON bodies so the caller receives a 400 instead of crashing. */
 async function readJson(request: NextRequest) {
   try {
     return await request.json();
