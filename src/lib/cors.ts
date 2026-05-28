@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { problemResponse } from "./errors";
 
 export class OriginNotAllowedError extends Error {
   constructor(message = "Forbidden") {
@@ -56,5 +57,5 @@ export function buildCorsHeaders(origin: string, extra?: Record<string, string>)
 }
 
 export function forbidden() {
-  return new Response("Forbidden", { status: 403, headers: SECURITY_HEADERS });
+  return problemResponse({ status: 403, code: "forbidden_origin", headers: SECURITY_HEADERS });
 }

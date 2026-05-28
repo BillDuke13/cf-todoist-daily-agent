@@ -32,7 +32,10 @@ License (see [LICENSE](LICENSE)).
   the front-end can overwrite the prompt and immediately submit `/plan`.
 - **Auth**: HTTP Basic Auth in `src/proxy.ts` (the Next.js 16 successor to
   `middleware.ts`) using a Web-Crypto SHA-256 constant-time compare from
-  `src/lib/auth.ts`.
+  `src/lib/auth.ts`, scoped by an explicit matcher
+  (`["/", "/plan", "/api/:path*"]`) with a configurable `AUTH_REALM`. All HTTP
+  errors are RFC 9457 `application/problem+json` (taxonomy in
+  `src/lib/errors.ts`).
 
 ## Features
 
@@ -45,8 +48,9 @@ License (see [LICENSE](LICENSE)).
 - **Priority normalization**: Natural-language cues such as `P0`, `P1`,
   `优先级 2`, or "high priority" map to Todoist REST priority numbers
   (`4 = P1`, `1 = P4`). Bulk MCP tools receive `p1`…`p4` strings instead.
-- **Streaming UX**: `/plan` replies with `application/x-ndjson` events
-  (`status`, `ai.plan`, `todoist.task`, `final`, `error`) so the UI can
+- **Streaming UX**: `/plan` replies with `application/x-ndjson` — a versioned
+  flat envelope (`stream.open`, `plan.status`, `plan.draft`, `todoist.task`,
+  `plan.final`, `plan.error`; every event has `seq` + `ts`) so the UI can
   display progress and failures incrementally.
 - **Voice-first flow**: Browser MediaRecorder → `/api/transcribe` → prompt
   submission in one click, with graceful fallbacks when permissions or size
@@ -69,6 +73,7 @@ License (see [LICENSE](LICENSE)).
 | `TODOIST_MCP_URL` | MCP Streamable HTTP endpoint (default `https://ai.todoist.net/mcp`). |
 | `TODOIST_TOKEN` | Bearer token recognized by Todoist MCP. |
 | `BASIC_AUTH_USER` / `BASIC_AUTH_PASS` | Credentials enforced by `src/proxy.ts` for every authenticated route (`/plan`, `/api/transcribe`, page routes). |
+| `AUTH_REALM` | Optional Basic Auth challenge realm. Non-sensitive `vars` default `"Todoist Daily Agent"`; override per environment. |
 | `DEBUG_EVENTS` | When `"true"` the worker emits `debug.*` NDJSON events and echoes truncated error detail to clients. Defaults to `"false"` in `wrangler.jsonc#vars`. |
 | `AI` binding | Configured in `wrangler.jsonc` to access Workers AI. |
 
@@ -94,7 +99,7 @@ Example streaming request:
 curl -u "$BASIC_AUTH_USER:$BASIC_AUTH_PASS" \
      -N -H "Content-Type: application/json" \
      -H "Origin: $FRONTEND_ORIGIN" \
-     -d '{"prompt":"Plan a mindful evening"}' \
+     -d '{"input":{"prompt":"Plan a mindful evening"}}' \
      http://127.0.0.1:8787/plan
 ```
 
@@ -164,12 +169,15 @@ publishes to the Worker name in `wrangler.jsonc`.
 - `POST /plan` — Main planner endpoint returning `application/x-ndjson`
   (see [`openapi/plan.yaml`](openapi/plan.yaml)).
 - `OPTIONS /api/transcribe` — CORS preflight (`204`).
-- `POST /api/transcribe` — Voice helper, returns `{ text, language? }` or an
-  error payload.
+- `POST /api/transcribe` — Voice helper, returns `{ text, language? }` on
+  success; errors are `application/problem+json`.
 
-The OpenAPI document defines request/response shapes for automation and
-client generation. `debug.*` events are intentionally **not** part of the
-stable contract.
+Request bodies are grouped objects (`/plan` takes `input` / `scheduling` /
+`defaults` / `limits`). All error responses use RFC 9457
+`application/problem+json` with a stable `code`; `validation_failed` carries
+field-level `errors[]`. The OpenAPI document defines request/response shapes
+for automation and client generation. `debug.*` events are intentionally
+**not** part of the stable contract.
 
 ## Testing & Verification
 

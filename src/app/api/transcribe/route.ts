@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { z } from "zod";
 import { OriginNotAllowedError, buildCorsHeaders, forbidden, resolveOrigin } from "@/lib/cors";
+import { problemResponse, zodIssuesToErrors } from "@/lib/errors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,24 +46,44 @@ export async function POST(request: NextRequest) {
     throw error;
   }
 
+  if (!isJsonRequest(request)) {
+    return problemResponse({
+      status: 415,
+      code: "unsupported_media_type",
+      detail: "Content-Type must be application/json",
+      headers: buildCorsHeaders(origin),
+    });
+  }
+
   const declaredLength = Number.parseInt(request.headers.get("content-length") ?? "", 10);
   if (Number.isFinite(declaredLength) && declaredLength > MAX_REQUEST_BYTES) {
-    return errorResponse("Audio payload exceeds the maximum size of 8MB", origin, 413);
+    return problemResponse({
+      status: 413,
+      code: "payload_too_large",
+      detail: "Audio payload exceeds the maximum size of 8MB",
+      headers: buildCorsHeaders(origin),
+    });
   }
 
   const body = await readJson(request);
   const parsed = whisperRequestSchema.safeParse(body);
   if (!parsed.success) {
-    return errorResponse(
-      parsed.error.flatten().formErrors.join("; ") || "Invalid request body",
-      origin,
-      400,
-    );
+    return problemResponse({
+      status: 400,
+      code: "validation_failed",
+      errors: zodIssuesToErrors(parsed.error),
+      headers: buildCorsHeaders(origin),
+    });
   }
 
   const estimatedBytes = Math.floor((parsed.data.audio.length / 4) * 3);
   if (estimatedBytes > MAX_AUDIO_BYTES) {
-    return errorResponse("Audio payload exceeds the maximum size of 8MB", origin, 413);
+    return problemResponse({
+      status: 413,
+      code: "payload_too_large",
+      detail: "Audio payload exceeds the maximum size of 8MB",
+      headers: buildCorsHeaders(origin),
+    });
   }
 
   const ai = env.AI as unknown as {
@@ -98,15 +119,17 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     console.error("/api/transcribe error", error);
-    return errorResponse("Unable to transcribe audio", origin, 500);
+    return problemResponse({
+      status: 500,
+      code: "transcription_failed",
+      detail: "Unable to transcribe audio",
+      headers: buildCorsHeaders(origin),
+    });
   }
 }
 
-function errorResponse(message: string, origin: string, status: number) {
-  return new Response(JSON.stringify({ error: message }), {
-    status,
-    headers: buildCorsHeaders(origin, { "Content-Type": "application/json" }),
-  });
+function isJsonRequest(request: NextRequest) {
+  return (request.headers.get("content-type") ?? "").toLowerCase().includes("application/json");
 }
 
 async function readJson(request: NextRequest) {

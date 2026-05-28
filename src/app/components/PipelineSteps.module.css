@@ -1,0 +1,65 @@
+.steps {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-5);
+}
+
+.step {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.marker {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--fg-subtle);
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+}
+
+.step[data-status="active"] .marker {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.step[data-status="done"] .marker {
+  border-color: var(--success);
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--fg-muted);
+}
+
+.step[data-status="active"] .label,
+.step[data-status="done"] .label {
+  color: var(--fg);
+}
+
+.intent {
+  padding: 0.15rem 0.55rem;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}

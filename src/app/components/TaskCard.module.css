@@ -1,0 +1,137 @@
+.card {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  animation: cardIn 0.3s ease both;
+  animation-delay: calc(var(--index, 0) * 60ms);
+}
+
+@keyframes cardIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.title {
+  font-weight: 600;
+  color: var(--fg);
+  line-height: 1.4;
+}
+
+.description {
+  font-size: 0.9rem;
+  color: var(--fg-muted);
+  line-height: 1.5;
+}
+
+.priority {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-pill);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.priority[data-level="1"] {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.priority[data-level="2"] {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.priority[data-level="3"] {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+.priority[data-level="4"] {
+  color: var(--fg-subtle);
+  background: var(--bg-muted);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-muted);
+  color: var(--fg-muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.sync {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.sync[data-status="queued"] {
+  color: var(--fg-subtle);
+}
+
+.sync[data-status="pending"] {
+  color: var(--accent-text);
+}
+
+.sync[data-status="created"] {
+  color: var(--success);
+}
+
+.sync[data-status="failed"] {
+  color: var(--danger);
+}
+
+.syncError {
+  flex-basis: 100%;
+  color: var(--fg-muted);
+  font-weight: 400;
+  font-size: 0.8rem;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}

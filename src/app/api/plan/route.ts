@@ -5,6 +5,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { OriginNotAllowedError, buildCorsHeaders, forbidden, resolveOrigin } from "@/lib/cors";
+import { problemResponse, zodIssuesToErrors } from "@/lib/errors";
 import { clampPriority, dedupeLabels, detectPriorityFromPrompt } from "@/lib/priority";
 
 // Behavior contract: docs/PLAN_PIPELINE.md and openapi/plan.yaml.
@@ -21,16 +22,41 @@ const MAX_TASKS = 10;
 // Plans only carry short prompts and a few JSON fields; 64KB is a generous
 // upper bound that still rejects accidental log dumps or pasted documents.
 const MAX_PLAN_REQUEST_BYTES = 64 * 1024;
+// NDJSON stream contract version, announced in the leading `stream.open` event.
+const PLAN_PROTOCOL_VERSION = "1.0";
 
-const requestSchema = z.object({
-  prompt: z.string().min(1, "Prompt is required").max(8192),
-  timezone: z.string().min(3).max(64).optional(),
-  due: z.string().min(3).max(256).optional(),
-  preferences: z.string().min(1).max(2048).optional(),
-  labels: z.array(z.string().min(1).max(64)).max(5).optional(),
-  priority: z.number().int().min(1).max(4).optional(),
-  maxTasks: z.number().int().min(MIN_TASKS).max(MAX_TASKS).default(5),
-});
+// External request body: fields grouped by intent. `.strict()` rejects unknown
+// keys so the contract stays explicit and validation errors are actionable.
+const requestSchema = z
+  .object({
+    input: z
+      .object({
+        prompt: z.string().min(1, "Prompt is required").max(8192),
+        preferences: z.string().min(1).max(2048).optional(),
+      })
+      .strict(),
+    scheduling: z
+      .object({
+        timezone: z.string().min(3).max(64).optional(),
+        due: z.string().min(3).max(256).optional(),
+      })
+      .strict()
+      .optional(),
+    defaults: z
+      .object({
+        priority: z.number().int().min(1).max(4).optional(),
+        labels: z.array(z.string().min(1).max(64)).max(5).optional(),
+      })
+      .strict()
+      .optional(),
+    limits: z
+      .object({
+        maxTasks: z.number().int().min(MIN_TASKS).max(MAX_TASKS).default(5),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
 
 const aiPlanSchema = z.object({
   summary: z.string().optional(),
@@ -60,7 +86,17 @@ const aiPlanSchema = z.object({
     .min(MIN_TASKS),
 });
 
-type PlanRequestBody = z.infer<typeof requestSchema>;
+// Internal flat working shape. POST maps the nested request schema into this so
+// the downstream planning pipeline (prompt building, normalization) is unchanged.
+type PlanRequestBody = {
+  prompt: string;
+  preferences?: string;
+  timezone?: string;
+  due?: string;
+  priority?: number;
+  labels?: string[];
+  maxTasks: number;
+};
 
 type PlannedTask = z.infer<typeof aiPlanSchema>["tasks"][number];
 
@@ -191,6 +227,7 @@ type TodoistTaskResult = {
   planned: NormalizedTask;
   status: "created" | "failed";
   todoistId?: string;
+  code?: string;
   error?: string;
 };
 
@@ -332,29 +369,61 @@ export async function POST(request: NextRequest) {
     throw error;
   }
 
+  if (!isJsonRequest(request)) {
+    return problemResponse({
+      status: 415,
+      code: "unsupported_media_type",
+      detail: "Content-Type must be application/json",
+      headers: buildCorsHeaders(origin),
+    });
+  }
+
   const declaredLength = Number.parseInt(request.headers.get("content-length") ?? "", 10);
   if (Number.isFinite(declaredLength) && declaredLength > MAX_PLAN_REQUEST_BYTES) {
-    return jsonError("Request body exceeds the maximum size of 64KB", origin, 413);
+    return problemResponse({
+      status: 413,
+      code: "payload_too_large",
+      detail: "Request body exceeds the maximum size of 64KB",
+      headers: buildCorsHeaders(origin),
+    });
   }
 
   const body = await parseJson(request);
   const parsed = requestSchema.safeParse(body);
   if (!parsed.success) {
-    return jsonError(parsed.error.flatten().formErrors.join("; ") || "Invalid request", origin, 400);
+    return problemResponse({
+      status: 400,
+      code: "validation_failed",
+      errors: zodIssuesToErrors(parsed.error),
+      headers: buildCorsHeaders(origin),
+    });
   }
 
   const encoder = new TextEncoder();
   const startedAt = Date.now();
-  const { data } = parsed;
+  const data: PlanRequestBody = {
+    prompt: parsed.data.input.prompt,
+    preferences: parsed.data.input.preferences,
+    timezone: parsed.data.scheduling?.timezone,
+    due: parsed.data.scheduling?.due,
+    priority: parsed.data.defaults?.priority,
+    labels: parsed.data.defaults?.labels,
+    maxTasks: parsed.data.limits?.maxTasks ?? 5,
+  };
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      const send = (event: unknown) => {
-        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      let seq = 0;
+      // Every event is framed with a monotonic `seq` and ISO-8601 `ts`; callers
+      // pass only the payload. `type` is hoisted first for log readability.
+      const emit = (event: { type: string } & Record<string, unknown>) => {
+        const { type, ...rest } = event;
+        const framed = { type, seq: seq++, ts: new Date().toISOString(), ...rest };
+        controller.enqueue(encoder.encode(`${JSON.stringify(framed)}\n`));
       };
       const debugEnabled = isDebugEnabled(env);
-      const sendDebug = (event: unknown) => {
-        if (debugEnabled) send(event);
+      const emitDebug = (event: { type: string } & Record<string, unknown>) => {
+        if (debugEnabled) emit(event);
       };
 
       (async () => {
@@ -362,6 +431,11 @@ export async function POST(request: NextRequest) {
         let client: Client | null = null;
         let availableTools: Tool[] | null = null;
         try {
+          emit({
+            type: "stream.open",
+            protocol: PLAN_PROTOCOL_VERSION,
+            request: { maxTasks: data.maxTasks },
+          });
           transport = createTransport(env);
           client = transport ? new Client({ name: "cf-todoist-daily-agent", version: "0.1.0" }) : null;
           if (client && transport) {
@@ -371,87 +445,83 @@ export async function POST(request: NextRequest) {
               availableTools = toolCatalog?.tools ?? null;
               if (availableTools) {
                 console.log("[todoist.tools]", availableTools.map((tool) => tool.name));
-                sendDebug({
+                emitDebug({
                   type: "debug.tools",
                   tools: availableTools.map((tool) => ({
                     name: tool.name,
                     description: typeof tool.description === "string" ? tool.description : undefined,
                   })),
-                  timestamp: new Date().toISOString(),
                 });
               }
             } catch (error) {
               console.warn("Unable to list Todoist MCP tools", error);
-              sendDebug({
+              emitDebug({
                 type: "debug.error",
                 stage: "tools",
                 message: error instanceof Error ? error.message : String(error),
-                timestamp: new Date().toISOString(),
               });
             }
           }
 
-          send({
-            type: "status",
-            stage: "ai:init",
+          emit({
+            type: "plan.status",
+            stage: "ai.init",
             message: "Planning tasks with Workers AI",
-            timestamp: new Date().toISOString(),
           });
 
           const priorityHint = detectPriorityFromPrompt(data.prompt);
-          send({
-            type: "status",
-            stage: "intent:detect",
+          emit({
+            type: "plan.status",
+            stage: "intent.detect",
             message: "Analyzing the request intent",
-            timestamp: new Date().toISOString(),
           });
           const intentDecision = await classifyIntent(env, data);
           const scenario = determineScenario(intentDecision, data);
-          send({
-            type: "status",
-            stage: "intent:classified",
+          emit({
+            type: "plan.status",
+            stage: "intent.classified",
             message: `Detected scenario: ${scenario.intent}`,
-            timestamp: new Date().toISOString(),
           });
 
           const todoistContext = await fetchTodoistMetadata(client, availableTools ?? undefined);
-          sendDebug({
+          emitDebug({
             type: "debug.metadata",
             projects: todoistContext.projects,
             labels: todoistContext.labels,
-            timestamp: new Date().toISOString(),
           });
           const inferredProject = inferProjectFromPrompt(data.prompt, todoistContext);
           const inferredLabels = inferLabelsFromPrompt(data.prompt, todoistContext);
           const plan = await generatePlan(env, data, scenario, intentDecision, todoistContext, priorityHint, inferredProject, inferredLabels);
-          sendDebug({
+          emitDebug({
             type: "debug.inference",
             inferredProject,
             inferredLabels,
             priorityHint,
-            timestamp: new Date().toISOString(),
           });
-          send({
-            type: "ai.plan",
+          emit({
+            type: "plan.draft",
             summary: plan.summary,
             tasks: plan.tasks,
             intent: scenario.intent,
-            timestamp: new Date().toISOString(),
           });
 
           const todoistResults = client
-            ? await syncWithTodoist(client, plan.tasks, env, data, send, availableTools ?? undefined)
-            : plan.tasks.map((task) => ({ planned: task, status: "failed" as const, error: "Todoist MCP client is unavailable" }));
+            ? await syncWithTodoist(client, plan.tasks, env, data, emit, availableTools ?? undefined)
+            : plan.tasks.map((task) => ({
+                planned: task,
+                status: "failed" as const,
+                code: "todoist_unavailable",
+                error: debugEnabled ? "Todoist MCP client is unavailable" : undefined,
+              }));
 
           const created = todoistResults.filter((item) => item.status === "created").length;
           const failed = todoistResults.filter((item) => item.status === "failed").length;
-          send({
-            type: "final",
+          emit({
+            type: "plan.final",
             created,
             failed,
             elapsedMs: Date.now() - startedAt,
             tasks: todoistResults,
-            timestamp: new Date().toISOString(),
           });
           controller.close();
         } catch (error) {
@@ -460,11 +530,11 @@ export async function POST(request: NextRequest) {
           // provider messages cannot reach the UI. Echo only when DEBUG_EVENTS=true.
           const detail =
             debugEnabled && error instanceof Error ? error.message.slice(0, 500) : undefined;
-          send({
-            type: "error",
+          emit({
+            type: "plan.error",
+            code: "internal",
             message: "Failed to generate the plan",
             detail,
-            timestamp: new Date().toISOString(),
           });
           controller.close();
         } finally {
@@ -937,19 +1007,19 @@ async function syncWithTodoist(
   tasks: NormalizedTask[],
   env: CloudflareEnv,
   input: PlanRequestBody,
-  send: (event: unknown) => void,
+  emit: (event: { type: string } & Record<string, unknown>) => void,
   availableTools?: Tool[],
 ) {
+  const debugEnabled = isDebugEnabled(env);
   const todoistUrl = ensureUrl(env.TODOIST_MCP_URL || "");
   const toolName = await resolveToolName(client, todoistUrl, env.TODOIST_TOKEN, availableTools);
   const results: TodoistTaskResult[] = [];
 
   for (const task of tasks) {
-    send({
+    emit({
       type: "todoist.task",
       status: "pending",
       task,
-      timestamp: new Date().toISOString(),
     });
 
     try {
@@ -966,22 +1036,26 @@ async function syncWithTodoist(
         status: "created",
         todoistId: parsed?.id,
       });
-      send({
+      emit({
         type: "todoist.task",
         status: "created",
         task,
         todoistId: parsed?.id,
-        timestamp: new Date().toISOString(),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      results.push({ planned: task, status: "failed", error: message });
-      send({
+      results.push({
+        planned: task,
+        status: "failed",
+        code: "todoist_sync_failed",
+        error: debugEnabled ? message : undefined,
+      });
+      emit({
         type: "todoist.task",
         status: "failed",
         task,
-        error: message,
-        timestamp: new Date().toISOString(),
+        code: "todoist_sync_failed",
+        detail: debugEnabled ? message.slice(0, 500) : undefined,
       });
     }
   }
@@ -1226,21 +1300,16 @@ function normalizePlanPayload(value: unknown) {
   return value;
 }
 
+function isJsonRequest(request: NextRequest) {
+  return (request.headers.get("content-type") ?? "").toLowerCase().includes("application/json");
+}
+
 async function parseJson(request: NextRequest) {
   try {
     return await request.json();
   } catch {
     return null;
   }
-}
-
-function jsonError(message: string, origin: string, status = 400) {
-  return new Response(JSON.stringify({ error: message }), {
-    status,
-    headers: buildCorsHeaders(origin, {
-      "Content-Type": "application/json",
-    }),
-  });
 }
 
 // `wrangler types` narrows DEBUG_EVENTS to the literal `"false"` from

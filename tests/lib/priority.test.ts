@@ -4,6 +4,7 @@ import {
   dedupeLabels,
   detectPriorityFromPrompt,
   mapPriorityCueToApi,
+  priorityToUiLabel,
 } from "@/lib/priority";
 
 describe("mapPriorityCueToApi", () => {
@@ -106,5 +107,26 @@ describe("dedupeLabels", () => {
 
   it("returns undefined when every entry collapses away", () => {
     expect(dedupeLabels(["", "  ", " "])).toBeUndefined();
+  });
+});
+
+describe("priorityToUiLabel", () => {
+  it("inverts the REST encoding so API 4 reads as P1 (highest)", () => {
+    expect(priorityToUiLabel(4)).toEqual({ label: "P1", level: 1 });
+  });
+
+  it("maps API 3/2/1 to P2/P3/P4 respectively", () => {
+    expect(priorityToUiLabel(3)).toEqual({ label: "P2", level: 2 });
+    expect(priorityToUiLabel(2)).toEqual({ label: "P3", level: 3 });
+    expect(priorityToUiLabel(1)).toEqual({ label: "P4", level: 4 });
+  });
+
+  it("returns undefined when priority is absent", () => {
+    expect(priorityToUiLabel(undefined)).toBeUndefined();
+  });
+
+  it("clamps out-of-range input before inverting", () => {
+    expect(priorityToUiLabel(0)).toEqual({ label: "P4", level: 4 });
+    expect(priorityToUiLabel(9)).toEqual({ label: "P1", level: 1 });
   });
 });

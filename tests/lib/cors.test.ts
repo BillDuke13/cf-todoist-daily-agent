@@ -107,11 +107,15 @@ describe("buildCorsHeaders", () => {
 });
 
 describe("forbidden", () => {
-  it("returns a 403 Response carrying the security baseline", () => {
+  it("returns a 403 problem+json Response carrying the security baseline", async () => {
     const response = forbidden();
     expect(response.status).toBe(403);
+    expect(response.headers.get("Content-Type")).toBe("application/problem+json");
     for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
       expect(response.headers.get(key)).toBe(value);
     }
+    const body = (await response.json()) as { code: string; status: number };
+    expect(body.code).toBe("forbidden_origin");
+    expect(body.status).toBe(403);
   });
 });
