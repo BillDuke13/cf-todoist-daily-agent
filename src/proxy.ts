@@ -3,8 +3,9 @@ import { NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { decodeBasicCredentials, safeEqual } from "@/lib/auth";
 import { SECURITY_HEADERS, parseAllowedOrigins } from "@/lib/cors";
+import { problemResponse } from "@/lib/errors";
 
-const REALM = "Todoist Daily Agent";
+const DEFAULT_REALM = "Todoist Daily Agent";
 
 export async function proxy(request: NextRequest) {
   const { env } = getCloudflareContext();
@@ -17,33 +18,36 @@ export async function proxy(request: NextRequest) {
     const allowedOrigins = parseAllowedOrigins(env.FRONTEND_ORIGIN);
     const requestOrigin = request.headers.get("origin");
     if (requestOrigin && allowedOrigins.length > 0 && !allowedOrigins.includes(requestOrigin)) {
-      return new NextResponse("Forbidden", { status: 403, headers: SECURITY_HEADERS });
+      return problemResponse({ status: 403, code: "forbidden_origin", headers: SECURITY_HEADERS });
     }
     return withSecurityHeaders(NextResponse.next());
   }
 
   const username = env.BASIC_AUTH_USER;
   const password = env.BASIC_AUTH_PASS;
+  const realm = env.AUTH_REALM || DEFAULT_REALM;
 
   if (!username || !password) {
-    return new NextResponse("Basic authentication secrets are not configured.", { status: 500 });
+    // Do not reveal which secret is missing.
+    console.error("Basic auth secrets are not configured");
+    return problemResponse({ status: 500, code: "misconfigured", headers: SECURITY_HEADERS });
   }
 
   const header = request.headers.get("authorization");
   if (!header?.startsWith("Basic ")) {
-    return unauthorized();
+    return unauthorized(realm);
   }
 
   let decoded: string;
   try {
     decoded = decodeBasicCredentials(header.slice("Basic ".length));
   } catch {
-    return unauthorized();
+    return unauthorized(realm);
   }
 
   const separator = decoded.indexOf(":");
   if (separator === -1) {
-    return unauthorized();
+    return unauthorized(realm);
   }
 
   const providedUser = decoded.slice(0, separator);
@@ -54,17 +58,18 @@ export async function proxy(request: NextRequest) {
     safeEqual(providedPass, password),
   ]);
   if (!userMatches || !passMatches) {
-    return unauthorized();
+    return unauthorized(realm);
   }
 
   return withSecurityHeaders(NextResponse.next());
 }
 
-function unauthorized() {
-  return new NextResponse("Unauthorized", {
+function unauthorized(realm: string) {
+  return problemResponse({
     status: 401,
+    code: "unauthorized",
     headers: {
-      "WWW-Authenticate": `Basic realm="${REALM}", charset="UTF-8"`,
+      "WWW-Authenticate": `Basic realm="${realm}", charset="UTF-8"`,
       ...SECURITY_HEADERS,
     },
   });
@@ -77,6 +82,10 @@ function withSecurityHeaders(response: NextResponse) {
   return response;
 }
 
+// Explicit allow-list of protected paths: the SPA shell (`/`), the public alias
+// `/plan` (rewritten to `/api/plan`), and every `/api/*` route. Static assets
+// under `/_next/*` stay public. An explicit list avoids a negative lookahead
+// silently protecting — or exposing — future routes.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/", "/plan", "/api/:path*"],
 };

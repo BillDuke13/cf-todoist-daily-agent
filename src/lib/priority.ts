@@ -1,5 +1,7 @@
-// @internal Public only for the test suite; consumers outside the planning
-// pipeline should not depend on these helpers.
+// @internal The prompt-detection helpers are public only for the test suite;
+// consumers outside the planning pipeline should not depend on them.
+// `priorityToUiLabel` is the one exception: it is the shared, single source of
+// truth for rendering the inverted Todoist priority in the UI.
 
 const PRIORITY_PATTERNS = [
   /(?:^|[^a-z0-9])p\s*([0-4])/,
@@ -46,6 +48,23 @@ export function clampPriority(priority?: number) {
     return undefined;
   }
   return Math.min(4, Math.max(1, Math.round(priority)));
+}
+
+export type PriorityBadge = {
+  label: `P${1 | 2 | 3 | 4}`;
+  level: 1 | 2 | 3 | 4;
+};
+
+// Inverse of the REST encoding for display: API 4 = P1 (highest) ... 1 = P4
+// (lowest). `level` mirrors the visible UI number (1 = most urgent) so callers
+// can drive severity styling without re-deriving the inversion.
+export function priorityToUiLabel(priority?: number): PriorityBadge | undefined {
+  const clamped = clampPriority(priority);
+  if (clamped === undefined) {
+    return undefined;
+  }
+  const level = (5 - clamped) as 1 | 2 | 3 | 4;
+  return { label: `P${level}`, level };
 }
 
 // Todoist enforces a five-label cap per task; trim and dedupe before sending.

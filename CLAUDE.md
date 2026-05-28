@@ -28,10 +28,11 @@ pnpm run cf-typegen     # Regenerate cloudflare-env.d.ts from wrangler.jsonc
      `high`, JSON-schema constrained.
   2. Scenario-specific task planning with `@cf/openai/gpt-oss-20b`, reasoning
      effort `medium`, JSON-schema constrained.
-- **Streaming response**: `application/x-ndjson` events with these stable
-  types: `status`, `ai.plan`, `todoist.task`, `final`, `error`. Anything
-  beginning with `debug.` is gated by `DEBUG_EVENTS=true` and is **not**
-  part of the public contract.
+- **Streaming response**: `application/x-ndjson`, a versioned flat envelope —
+  every event carries a monotonic `seq` and an ISO-8601 `ts`. Stable types:
+  `stream.open` (first line, carries `protocol`), `plan.status`, `plan.draft`,
+  `todoist.task`, `plan.final`, `plan.error`. Anything beginning with `debug.`
+  is gated by `DEBUG_EVENTS=true` and is **not** part of the public contract.
 - **Todoist MCP integration**: `StreamableHTTPClientTransport` with dynamic
   tool discovery (`client.listTools()`) plus alias-based fallbacks, so the
   worker keeps working through Todoist tool renames or legacy/official
@@ -40,7 +41,13 @@ pnpm run cf-typegen     # Regenerate cloudflare-env.d.ts from wrangler.jsonc
   `@cf/openai/whisper-large-v3-turbo` with an 8 MB decoded cap.
 - **Auth**: HTTP Basic Auth in `src/proxy.ts` (the Next.js 16 successor to
   `middleware.ts`) using a Web-Crypto SHA-256 constant-time compare from
-  `src/lib/auth.ts`.
+  `src/lib/auth.ts`. The matcher is an explicit allow-list
+  (`["/", "/plan", "/api/:path*"]`); the realm is configurable via `AUTH_REALM`.
+- **Errors**: all HTTP errors are RFC 9457 `application/problem+json` with a
+  stable `code` (taxonomy + builders in `src/lib/errors.ts`), shared with the
+  stream's `plan.error.code` / `todoist.task.code`. `validation_failed` carries
+  field-level `errors[]`. Use `problemResponse()` / `zodIssuesToErrors()` — do
+  not hand-roll error bodies or fall back to `formErrors`.
 - **URL rewrite**: `next.config.ts` rewrites `/plan` → `/api/plan` so the
   SPA can POST to the short path. The transcription endpoint has no rewrite —
   clients call `/api/transcribe` directly.
@@ -53,6 +60,7 @@ typings live in `src/types/cloudflare-secrets.d.ts`.
 | Name | Purpose |
 | --- | --- |
 | `BASIC_AUTH_USER` / `BASIC_AUTH_PASS` | HTTP Basic Auth credentials enforced by `src/proxy.ts`. |
+| `AUTH_REALM` | Basic Auth challenge realm (non-sensitive `vars` default `"Todoist Daily Agent"`). |
 | `TODOIST_TOKEN` | Bearer token for Todoist MCP. |
 | `TODOIST_MCP_URL` | MCP endpoint (defaults to `https://ai.todoist.net/mcp`). |
 | `FRONTEND_ORIGIN` | Allowed CORS origin; comma-separated list supported. |
@@ -86,8 +94,8 @@ typings live in `src/types/cloudflare-secrets.d.ts`.
   `pretest`, `prebuild`, `prepreview`, `predeploy`).
 - Tests run with Vitest in a Node environment (`vitest.config.ts`). They
   cover the pure helpers (`src/lib/auth.ts`, `src/lib/cors.ts`,
-  `src/lib/priority.ts`); route handlers are exercised via `pnpm preview`
-  and live MCP traffic.
+  `src/lib/errors.ts`, `src/lib/priority.ts`); route handlers are exercised
+  via `pnpm preview` and live MCP traffic.
 - `wrangler.jsonc#vars.DEBUG_EVENTS` is typed as the literal `"false"` by
   `cf-typegen`; `isDebugEnabled` casts through `unknown` so a
   `wrangler secret put DEBUG_EVENTS true` override stays comparable at

@@ -10,6 +10,9 @@
  * environment with `wrangler secret put DEBUG_EVENTS true` when triaging.
  * `cf-typegen` infers the literal `"false"` for it — see `isDebugEnabled` in
  * `src/app/api/plan/route.ts` for the runtime cast that handles overrides.
+ *
+ * `AUTH_REALM` is a non-sensitive default for the HTTP Basic Auth challenge
+ * realm in `src/proxy.ts`; override it per environment as needed.
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
@@ -31,6 +34,7 @@
 		"enabled": true
 	},
 	"vars": {
-		"DEBUG_EVENTS": "false"
+		"DEBUG_EVENTS": "false",
+		"AUTH_REALM": "Todoist Daily Agent"
 	}
 }
