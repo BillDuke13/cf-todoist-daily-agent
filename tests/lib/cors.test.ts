@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import {
   OriginNotAllowedError,
   SECURITY_HEADERS,
+  buildContentSecurityPolicy,
   buildCorsHeaders,
   forbidden,
   parseAllowedOrigins,
@@ -81,12 +82,19 @@ describe("buildCorsHeaders", () => {
   it("includes the standard CORS triplet plus the security baseline", () => {
     const headers = buildCorsHeaders(origin) as Record<string, string>;
     expect(headers["Access-Control-Allow-Origin"]).toBe(origin);
+    expect(headers["Access-Control-Allow-Credentials"]).toBe("true");
     expect(headers["Access-Control-Allow-Methods"]).toBe("OPTIONS, POST");
-    expect(headers["Access-Control-Allow-Headers"]).toBe("content-type");
+    expect(headers["Access-Control-Allow-Headers"]).toBe("content-type, authorization");
     expect(headers["Vary"]).toBe("Origin");
     for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
       expect(headers[key]).toBe(value);
     }
+  });
+
+  it("pairs Allow-Credentials only with a specific (never wildcard) origin", () => {
+    const headers = buildCorsHeaders(origin) as Record<string, string>;
+    expect(headers["Access-Control-Allow-Origin"]).not.toBe("*");
+    expect(headers["Access-Control-Allow-Credentials"]).toBe("true");
   });
 
   it("lets callers add headers like Content-Type via `extra`", () => {
@@ -103,6 +111,37 @@ describe("buildCorsHeaders", () => {
     }) as Record<string, string>;
     expect(headers["X-Frame-Options"]).toBe(SECURITY_HEADERS["X-Frame-Options"]);
     expect(headers["Referrer-Policy"]).toBe(SECURITY_HEADERS["Referrer-Policy"]);
+  });
+});
+
+describe("SECURITY_HEADERS", () => {
+  it("ships a Content-Security-Policy that forbids framing and restricts sources", () => {
+    const csp = SECURITY_HEADERS["Content-Security-Policy"];
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("base-uri 'self'");
+    expect(csp).toContain("connect-src 'self'");
+  });
+});
+
+describe("buildContentSecurityPolicy", () => {
+  it("keeps production strict: no 'unsafe-eval', no ws:", () => {
+    const csp = buildContentSecurityPolicy(false);
+    expect(csp).toContain("script-src 'self' 'unsafe-inline'");
+    expect(csp).not.toContain("'unsafe-eval'");
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).not.toContain("ws:");
+    expect(csp).toContain("frame-ancestors 'none'");
+  });
+
+  it("relaxes only what the Next dev bundler needs ('unsafe-eval' + ws: for HMR)", () => {
+    const csp = buildContentSecurityPolicy(true);
+    expect(csp).toContain("script-src 'self' 'unsafe-inline' 'unsafe-eval'");
+    expect(csp).toContain("connect-src 'self' ws:");
+    // Clickjacking / object protections must still hold in development.
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("object-src 'none'");
   });
 });
 

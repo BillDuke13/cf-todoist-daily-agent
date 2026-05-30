@@ -358,7 +358,10 @@ components:
               format: date-time
             code:
               type: string
-              description: Stable error code (for example `internal`). Mirrors the `Problem.code` taxonomy.
+              description: |
+                Stable error code from the `Problem.code` taxonomy. Terminal `/plan`
+                failures currently emit `ai_unavailable` (planning model failed),
+                `todoist_unavailable` (MCP connection failed), or `internal`.
             message:
               type: string
             detail:
