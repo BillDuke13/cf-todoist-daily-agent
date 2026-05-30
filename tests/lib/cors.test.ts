@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import {
   OriginNotAllowedError,
   SECURITY_HEADERS,
+  buildContentSecurityPolicy,
   buildCorsHeaders,
   forbidden,
   parseAllowedOrigins,
@@ -121,6 +122,26 @@ describe("SECURITY_HEADERS", () => {
     expect(csp).toContain("object-src 'none'");
     expect(csp).toContain("base-uri 'self'");
     expect(csp).toContain("connect-src 'self'");
+  });
+});
+
+describe("buildContentSecurityPolicy", () => {
+  it("keeps production strict: no 'unsafe-eval', no ws:", () => {
+    const csp = buildContentSecurityPolicy(false);
+    expect(csp).toContain("script-src 'self' 'unsafe-inline'");
+    expect(csp).not.toContain("'unsafe-eval'");
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).not.toContain("ws:");
+    expect(csp).toContain("frame-ancestors 'none'");
+  });
+
+  it("relaxes only what the Next dev bundler needs ('unsafe-eval' + ws: for HMR)", () => {
+    const csp = buildContentSecurityPolicy(true);
+    expect(csp).toContain("script-src 'self' 'unsafe-inline' 'unsafe-eval'");
+    expect(csp).toContain("connect-src 'self' ws:");
+    // Clickjacking / object protections must still hold in development.
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("object-src 'none'");
   });
 });
 

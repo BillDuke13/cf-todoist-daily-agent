@@ -188,10 +188,14 @@ baseline from `src/lib/cors.ts#SECURITY_HEADERS`: HSTS, `nosniff`,
 `object-src 'none'`, `connect-src 'self'`). `script-`/`style-src` keep
 `'unsafe-inline'` because Next.js injects inline bootstrap scripts and
 `next/font` emits an inline `<style>`; a per-request nonce is the documented
-follow-up. CORS reflects a single allow-listed `Access-Control-Allow-Origin`
-(never `*`, validated by `resolveOrigin`) together with
-`Access-Control-Allow-Credentials: true`, so a cross-origin `FRONTEND_ORIGIN`
-can send Basic Auth credentials safely.
+follow-up. In development (`process.env.NODE_ENV !== "production"`) the policy
+additionally allows `'unsafe-eval'` and `ws:` because the Next dev server
+evaluates modules with `eval()` and React Fast Refresh opens an HMR WebSocket;
+the production build (`next build --webpack`) uses neither and stays strict (see
+`buildContentSecurityPolicy` in `src/lib/cors.ts`). CORS reflects a single
+allow-listed `Access-Control-Allow-Origin` (never `*`, validated by
+`resolveOrigin`) together with `Access-Control-Allow-Credentials: true`, so a
+cross-origin `FRONTEND_ORIGIN` can send Basic Auth credentials safely.
 
 ## MCP Contract
 

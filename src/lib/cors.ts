@@ -15,25 +15,37 @@ export class OriginNotAllowedError extends Error {
 // per-request nonce is the documented follow-up. `frame-ancestors 'none'` is the
 // modern superset of X-Frame-Options; `connect-src 'self'` matches the SPA only
 // ever calling its same-origin /plan and /api/transcribe endpoints.
-const CONTENT_SECURITY_POLICY = [
-  "default-src 'self'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-  "object-src 'none'",
-  "img-src 'self' data:",
-  "font-src 'self'",
-  "style-src 'self' 'unsafe-inline'",
-  "script-src 'self' 'unsafe-inline'",
-  "connect-src 'self'",
-].join("; ");
+//
+// Development needs two relaxations the production bundle never does: the Next
+// dev server (Turbopack) evaluates modules with `eval()` — hence `'unsafe-eval'`
+// — and React Fast Refresh opens an HMR WebSocket — hence `ws:` in connect-src.
+// The production build (`next build --webpack`) uses neither, so prod stays
+// strict. `process.env.NODE_ENV` is inlined at build time by Next.
+export function buildContentSecurityPolicy(isDev: boolean): string {
+  const scriptSrc = isDev
+    ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+    : "script-src 'self' 'unsafe-inline'";
+  const connectSrc = isDev ? "connect-src 'self' ws:" : "connect-src 'self'";
+  return [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    "img-src 'self' data:",
+    "font-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    scriptSrc,
+    connectSrc,
+  ].join("; ");
+}
 
 export const SECURITY_HEADERS: Record<string, string> = {
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
   "X-Frame-Options": "DENY",
-  "Content-Security-Policy": CONTENT_SECURITY_POLICY,
+  "Content-Security-Policy": buildContentSecurityPolicy(process.env.NODE_ENV !== "production"),
   // Allow microphone for the voice-input flow on the same origin and disable
   // browser features the app does not use. interest-cohort opts out of FLoC.
   "Permissions-Policy":
