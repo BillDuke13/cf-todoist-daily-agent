@@ -11,11 +11,15 @@ const MAX_AUDIO_BYTES = 8 * 1024 * 1024; // 8MB after base64 decoding.
 // Base64 inflates the payload ~4/3; allow a small JSON envelope on top.
 const MAX_REQUEST_BYTES = Math.ceil(MAX_AUDIO_BYTES * 1.4) + 1024;
 
-const whisperRequestSchema = z.object({
-  audio: z.string().min(16, "Audio payload is required"),
-  language: z.string().min(2).optional(),
-  task: z.enum(["transcribe", "translate"]).optional(),
-});
+const whisperRequestSchema = z
+  .object({
+    audio: z.string().min(16, "Audio payload is required"),
+    language: z.string().min(2).optional(),
+    task: z.enum(["transcribe", "translate"]).optional(),
+  })
+  // Matches `additionalProperties: false` in openapi/plan.yaml#WhisperRequest and
+  // the strictness of the /plan request schema.
+  .strict();
 
 export async function OPTIONS(request: NextRequest) {
   const { env } = getCloudflareContext();
@@ -129,7 +133,10 @@ export async function POST(request: NextRequest) {
 }
 
 function isJsonRequest(request: NextRequest) {
-  return (request.headers.get("content-type") ?? "").toLowerCase().includes("application/json");
+  // Compare the bare media type so `application/json; charset=utf-8` passes while
+  // composite values like `text/html+application/json` do not.
+  const mediaType = (request.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  return mediaType === "application/json";
 }
 
 async function readJson(request: NextRequest) {

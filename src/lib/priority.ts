@@ -55,15 +55,22 @@ export type PriorityBadge = {
   level: 1 | 2 | 3 | 4;
 };
 
-// Inverse of the REST encoding for display: API 4 = P1 (highest) ... 1 = P4
-// (lowest). `level` mirrors the visible UI number (1 = most urgent) so callers
-// can drive severity styling without re-deriving the inversion.
+// Single source of truth for the REST→UI inversion: API 4 = P1 (highest) ...
+// API 1 = P4 (lowest). Both the UI badge and the MCP `p{1-4}` string flag derive
+// from this so the `5 - n` constant lives in exactly one place.
+export function apiPriorityToUiLevel(priority: number): 1 | 2 | 3 | 4 {
+  const clamped = clampPriority(priority) ?? 1;
+  return (5 - clamped) as 1 | 2 | 3 | 4;
+}
+
+// `level` mirrors the visible UI number (1 = most urgent) so callers can drive
+// severity styling without re-deriving the inversion.
 export function priorityToUiLabel(priority?: number): PriorityBadge | undefined {
   const clamped = clampPriority(priority);
   if (clamped === undefined) {
     return undefined;
   }
-  const level = (5 - clamped) as 1 | 2 | 3 | 4;
+  const level = apiPriorityToUiLevel(clamped);
   return { label: `P${level}`, level };
 }
 

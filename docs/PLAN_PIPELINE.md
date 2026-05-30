@@ -181,6 +181,18 @@ The proxy's `401`/`403`/`500` responses are problem+json. Brute-force
 protection is delegated to the edge (Cloudflare WAF / Rate-Limiting rules on
 `/plan` and `/api/*`) rather than in-worker state.
 
+Every response (including the NDJSON stream) carries the hardened header
+baseline from `src/lib/cors.ts#SECURITY_HEADERS`: HSTS, `nosniff`,
+`X-Frame-Options: DENY`, a `Permissions-Policy`, and a defense-in-depth
+`Content-Security-Policy` (`default-src 'self'`, `frame-ancestors 'none'`,
+`object-src 'none'`, `connect-src 'self'`). `script-`/`style-src` keep
+`'unsafe-inline'` because Next.js injects inline bootstrap scripts and
+`next/font` emits an inline `<style>`; a per-request nonce is the documented
+follow-up. CORS reflects a single allow-listed `Access-Control-Allow-Origin`
+(never `*`, validated by `resolveOrigin`) together with
+`Access-Control-Allow-Credentials: true`, so a cross-origin `FRONTEND_ORIGIN`
+can send Basic Auth credentials safely.
+
 ## MCP Contract
 
 1. Open a `StreamableHTTPClientTransport` against `TODOIST_MCP_URL` with
@@ -222,8 +234,11 @@ protection is delegated to the edge (Cloudflare WAF / Rate-Limiting rules on
     On `failed`, carries a stable `code`; the raw `detail` is omitted unless
     `DEBUG_EVENTS=true`.
   - `plan.final` — completion summary with counts and elapsed milliseconds.
-  - `plan.error` — terminal failure with a stable `code`. `detail` is omitted
-    unless `DEBUG_EVENTS=true`, so the production response stays opaque.
+  - `plan.error` — terminal failure with a stable `code` drawn from the
+    `Problem` taxonomy: `ai_unavailable` (the planning model failed),
+    `todoist_unavailable` (the MCP connection failed), or `internal` (anything
+    else). `detail` is omitted unless `DEBUG_EVENTS=true`, so the production
+    response stays opaque.
 - **Debug events** (only when `DEBUG_EVENTS=true`, **not** part of the
   contract): `debug.tools`, `debug.metadata`, `debug.inference`,
   `debug.error`. Production clients must ignore unknown event types.

@@ -8,11 +8,32 @@ export class OriginNotAllowedError extends Error {
   }
 }
 
+// Defense-in-depth CSP. React escapes all model-generated text (no innerHTML
+// sinks), so this is a second layer rather than the primary XSS control.
+// `script-src`/`style-src` keep `'unsafe-inline'` because Next.js injects inline
+// bootstrap scripts and next/font emits an inline <style>; tightening to a
+// per-request nonce is the documented follow-up. `frame-ancestors 'none'` is the
+// modern superset of X-Frame-Options; `connect-src 'self'` matches the SPA only
+// ever calling its same-origin /plan and /api/transcribe endpoints.
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline'",
+  "connect-src 'self'",
+].join("; ");
+
 export const SECURITY_HEADERS: Record<string, string> = {
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
   "X-Frame-Options": "DENY",
+  "Content-Security-Policy": CONTENT_SECURITY_POLICY,
   // Allow microphone for the voice-input flow on the same origin and disable
   // browser features the app does not use. interest-cohort opts out of FLoC.
   "Permissions-Policy":
@@ -47,9 +68,13 @@ export function buildCorsHeaders(origin: string, extra?: Record<string, string>)
   // SECURITY_HEADERS itself. Spreading them LAST makes callers' `extra` unable
   // to weaken the baseline (e.g. an X-Frame-Options: SAMEORIGIN gets overridden).
   return {
+    // `origin` is always a single allow-listed value (resolveOrigin rejects any
+    // mismatch and never returns "*"), so pairing it with Allow-Credentials is
+    // safe and lets a cross-origin FRONTEND_ORIGIN send Basic Auth credentials.
     "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Credentials": "true",
     "Access-Control-Allow-Methods": "OPTIONS, POST",
-    "Access-Control-Allow-Headers": "content-type",
+    "Access-Control-Allow-Headers": "content-type, authorization",
     Vary: "Origin",
     ...extra,
     ...SECURITY_HEADERS,

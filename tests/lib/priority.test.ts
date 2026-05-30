@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  apiPriorityToUiLevel,
   clampPriority,
   dedupeLabels,
   detectPriorityFromPrompt,
@@ -107,6 +108,20 @@ describe("dedupeLabels", () => {
 
   it("returns undefined when every entry collapses away", () => {
     expect(dedupeLabels(["", "  ", " "])).toBeUndefined();
+  });
+});
+
+describe("apiPriorityToUiLevel", () => {
+  it("inverts API priority into the visible UI level", () => {
+    expect(apiPriorityToUiLevel(4)).toBe(1);
+    expect(apiPriorityToUiLevel(3)).toBe(2);
+    expect(apiPriorityToUiLevel(2)).toBe(3);
+    expect(apiPriorityToUiLevel(1)).toBe(4);
+  });
+
+  it("clamps out-of-range input before inverting", () => {
+    expect(apiPriorityToUiLevel(0)).toBe(4);
+    expect(apiPriorityToUiLevel(9)).toBe(1);
   });
 });
 

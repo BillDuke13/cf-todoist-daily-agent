@@ -5,8 +5,8 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { OriginNotAllowedError, buildCorsHeaders, forbidden, resolveOrigin } from "@/lib/cors";
-import { problemResponse, zodIssuesToErrors } from "@/lib/errors";
-import { clampPriority, dedupeLabels, detectPriorityFromPrompt } from "@/lib/priority";
+import { problemResponse, zodIssuesToErrors, type ErrorCode } from "@/lib/errors";
+import { apiPriorityToUiLevel, clampPriority, dedupeLabels, detectPriorityFromPrompt } from "@/lib/priority";
 
 // Behavior contract: docs/PLAN_PIPELINE.md and openapi/plan.yaml.
 // Anything user-visible that this file changes (event types, error semantics,
@@ -24,6 +24,26 @@ const MAX_TASKS = 10;
 const MAX_PLAN_REQUEST_BYTES = 64 * 1024;
 // NDJSON stream contract version, announced in the leading `stream.open` event.
 const PLAN_PROTOCOL_VERSION = "1.0";
+
+// Carries a stable ErrorCode out of the streaming pipeline so the terminal
+// `plan.error` can distinguish AI vs Todoist vs unknown failures instead of
+// collapsing everything to `internal`. The underlying cause stays DEBUG-gated.
+class PlanError extends Error {
+  readonly code: ErrorCode;
+  constructor(code: ErrorCode, message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "PlanError";
+    this.code = code;
+  }
+}
+
+// User-facing (non-DEBUG) messages for terminal stream failures. These strings
+// carry no sensitive information; raw detail remains gated behind DEBUG_EVENTS.
+const PLAN_ERROR_MESSAGES: Record<string, string> = {
+  ai_unavailable: "AI planning is temporarily unavailable",
+  todoist_unavailable: "Could not reach Todoist",
+  internal: "Failed to generate the plan",
+};
 
 // External request body: fields grouped by intent. `.strict()` rejects unknown
 // keys so the contract stays explicit and validation errors are actionable.
@@ -187,7 +207,7 @@ const LABEL_TOOL_ALIASES: TodoistListToolAlias[] = [
 
 const DEFAULT_COLLECTION_KEYS = ["projects", "labels", "data", "items", "results", "structuredContent"] as const;
 const LIST_VERB_KEYWORDS = ["list", "find", "search", "get", "overview", "browse", "view", "all"];
-const MUTATING_KEYWORDS = ["add", "create", "update", "delete", "remove", "complete", "close", "assign", "set", "comment"]; 
+const MUTATING_KEYWORDS = ["add", "create", "update", "delete", "remove", "complete", "close", "assign", "set", "comment"];
 
 function matchesListTool(tool: Tool, keywords: string[]) {
   const text = buildToolText(tool);
@@ -401,6 +421,7 @@ export async function POST(request: NextRequest) {
 
   const encoder = new TextEncoder();
   const startedAt = Date.now();
+  const signal = request.signal;
   const data: PlanRequestBody = {
     prompt: parsed.data.input.prompt,
     preferences: parsed.data.input.preferences,
@@ -411,19 +432,53 @@ export async function POST(request: NextRequest) {
     maxTasks: parsed.data.limits?.maxTasks ?? 5,
   };
 
+  // Hoisted to POST scope so the stream's cancel() and the async producer share
+  // one teardown view: a consumer disconnect (cancel) or request-abort flips
+  // streamAborted, and every close funnels through safeClose() so it runs once.
+  let streamClosed = false;
+  let streamAborted = signal.aborted;
+
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       let seq = 0;
+      const safeClose = () => {
+        if (streamClosed) return;
+        streamClosed = true;
+        try {
+          controller.close();
+        } catch {
+          // Already closed/errored (e.g. the consumer went away); nothing to do.
+        }
+      };
       // Every event is framed with a monotonic `seq` and ISO-8601 `ts`; callers
       // pass only the payload. `type` is hoisted first for log readability.
       const emit = (event: { type: string } & Record<string, unknown>) => {
+        if (streamClosed) return;
         const { type, ...rest } = event;
         const framed = { type, seq: seq++, ts: new Date().toISOString(), ...rest };
-        controller.enqueue(encoder.encode(`${JSON.stringify(framed)}\n`));
+        try {
+          controller.enqueue(encoder.encode(`${JSON.stringify(framed)}\n`));
+        } catch {
+          // The consumer cancelled mid-write; stop emitting further frames.
+          streamClosed = true;
+        }
       };
       const debugEnabled = isDebugEnabled(env);
       const emitDebug = (event: { type: string } & Record<string, unknown>) => {
         if (debugEnabled) emit(event);
+      };
+      const onAbort = () => {
+        streamAborted = true;
+      };
+      signal.addEventListener("abort", onAbort);
+      // Returns false once the consumer has gone away so the producer can stop
+      // spending Workers AI / MCP calls on a response nobody will read.
+      const ensureActive = () => {
+        if (streamAborted) {
+          safeClose();
+          return false;
+        }
+        return true;
       };
 
       (async () => {
@@ -431,6 +486,7 @@ export async function POST(request: NextRequest) {
         let client: Client | null = null;
         let availableTools: Tool[] | null = null;
         try {
+          if (!ensureActive()) return;
           emit({
             type: "stream.open",
             protocol: PLAN_PROTOCOL_VERSION,
@@ -439,7 +495,11 @@ export async function POST(request: NextRequest) {
           transport = createTransport(env);
           client = transport ? new Client({ name: "cf-todoist-daily-agent", version: "0.1.0" }) : null;
           if (client && transport) {
-            await client.connect(transport);
+            try {
+              await client.connect(transport);
+            } catch (error) {
+              throw new PlanError("todoist_unavailable", "Could not reach Todoist", { cause: error });
+            }
             try {
               const toolCatalog = await client.listTools();
               availableTools = toolCatalog?.tools ?? null;
@@ -463,6 +523,7 @@ export async function POST(request: NextRequest) {
             }
           }
 
+          if (!ensureActive()) return;
           emit({
             type: "plan.status",
             stage: "ai.init",
@@ -477,6 +538,7 @@ export async function POST(request: NextRequest) {
           });
           const intentDecision = await classifyIntent(env, data);
           const scenario = determineScenario(intentDecision, data);
+          if (!ensureActive()) return;
           emit({
             type: "plan.status",
             stage: "intent.classified",
@@ -491,13 +553,21 @@ export async function POST(request: NextRequest) {
           });
           const inferredProject = inferProjectFromPrompt(data.prompt, todoistContext);
           const inferredLabels = inferLabelsFromPrompt(data.prompt, todoistContext);
-          const plan = await generatePlan(env, data, scenario, intentDecision, todoistContext, priorityHint, inferredProject, inferredLabels);
+          if (!ensureActive()) return;
+          let plan: Awaited<ReturnType<typeof generatePlan>>;
+          try {
+            plan = await generatePlan(env, data, scenario, intentDecision, todoistContext, priorityHint, inferredProject, inferredLabels);
+          } catch (error) {
+            if (error instanceof PlanError) throw error;
+            throw new PlanError("ai_unavailable", "Workers AI could not generate a plan", { cause: error });
+          }
           emitDebug({
             type: "debug.inference",
             inferredProject,
             inferredLabels,
             priorityHint,
           });
+          if (!ensureActive()) return;
           emit({
             type: "plan.draft",
             summary: plan.summary,
@@ -506,7 +576,7 @@ export async function POST(request: NextRequest) {
           });
 
           const todoistResults = client
-            ? await syncWithTodoist(client, plan.tasks, env, data, emit, availableTools ?? undefined)
+            ? await syncWithTodoist(client, plan.tasks, env, data, emit, () => streamAborted, availableTools ?? undefined)
             : plan.tasks.map((task) => ({
                 planned: task,
                 status: "failed" as const,
@@ -514,6 +584,7 @@ export async function POST(request: NextRequest) {
                 error: debugEnabled ? "Todoist MCP client is unavailable" : undefined,
               }));
 
+          if (!ensureActive()) return;
           const created = todoistResults.filter((item) => item.status === "created").length;
           const failed = todoistResults.filter((item) => item.status === "failed").length;
           emit({
@@ -523,27 +594,40 @@ export async function POST(request: NextRequest) {
             elapsedMs: Date.now() - startedAt,
             tasks: todoistResults,
           });
-          controller.close();
         } catch (error) {
+          // The consumer already disconnected; there is nobody to receive an error.
+          if (streamAborted) return;
           console.error("/plan failed", error);
           // Production keeps the error opaque so stack traces, MCP responses, and AI
           // provider messages cannot reach the UI. Echo only when DEBUG_EVENTS=true.
-          const detail =
-            debugEnabled && error instanceof Error ? error.message.slice(0, 500) : undefined;
+          const code: ErrorCode = error instanceof PlanError ? error.code : "internal";
+          const rawDetail =
+            error instanceof PlanError && error.cause instanceof Error
+              ? error.cause.message
+              : error instanceof Error
+                ? error.message
+                : String(error);
           emit({
             type: "plan.error",
-            code: "internal",
-            message: "Failed to generate the plan",
-            detail,
+            code,
+            message: PLAN_ERROR_MESSAGES[code] ?? PLAN_ERROR_MESSAGES.internal,
+            detail: debugEnabled ? rawDetail.slice(0, 500) : undefined,
           });
-          controller.close();
         } finally {
+          signal.removeEventListener("abort", onAbort);
           await closeClient(client);
+          safeClose();
         }
       })().catch((error) => {
         console.error("Streaming error", error);
-        controller.close();
+        safeClose();
       });
+    },
+    cancel() {
+      // The consumer (browser fetch) went away; stop producing and let any
+      // in-flight async work observe streamAborted at its next checkpoint.
+      streamAborted = true;
+      streamClosed = true;
     },
   });
 
@@ -928,9 +1012,7 @@ function normalizeTask(
 }
 
 function mapApiPriorityToUiFlag(priority: number) {
-  const normalized = clampPriority(priority) ?? 1;
-  const uiLevel = 5 - normalized;
-  return `p${uiLevel}`;
+  return `p${apiPriorityToUiLevel(priority)}`;
 }
 
 function normalizeLabels(
@@ -1008,6 +1090,7 @@ async function syncWithTodoist(
   env: CloudflareEnv,
   input: PlanRequestBody,
   emit: (event: { type: string } & Record<string, unknown>) => void,
+  isAborted: () => boolean,
   availableTools?: Tool[],
 ) {
   const debugEnabled = isDebugEnabled(env);
@@ -1016,6 +1099,8 @@ async function syncWithTodoist(
   const results: TodoistTaskResult[] = [];
 
   for (const task of tasks) {
+    // Stop spending MCP calls if the consumer disconnected mid-sync.
+    if (isAborted()) break;
     emit({
       type: "todoist.task",
       status: "pending",
@@ -1301,7 +1386,10 @@ function normalizePlanPayload(value: unknown) {
 }
 
 function isJsonRequest(request: NextRequest) {
-  return (request.headers.get("content-type") ?? "").toLowerCase().includes("application/json");
+  // Compare the bare media type so `application/json; charset=utf-8` passes while
+  // composite values like `text/html+application/json` do not.
+  const mediaType = (request.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  return mediaType === "application/json";
 }
 
 async function parseJson(request: NextRequest) {
