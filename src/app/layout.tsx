@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Todoist Daily Agent",
-  description: "Plan a day with Workers AI and push tasks through the Todoist MCP pipeline.",
+  title: "Todoist Daily Planner",
+  description: "Generate structured Todoist tasks from natural language using Workers AI and MCP.",
 };
 
 export default function RootLayout({
@@ -24,9 +24,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable}`}>
-        {children}
-      </body>
+      <body className={`${geistSans.variable} ${geistMono.variable}`}>{children}</body>
     </html>
   );
 }
