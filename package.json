@@ -2,6 +2,9 @@
 	"name": "cf-todoist-daily-agent",
 	"version": "0.1.0",
 	"private": true,
+	"engines": {
+		"node": ">=22.12.0"
+	},
 	"scripts": {
 		"postinstall": "pnpm cf-typegen",
 		"predev": "pnpm cf-typegen",
@@ -11,6 +14,8 @@
 		"start": "next start",
 		"prelint": "pnpm cf-typegen",
 		"lint": "eslint .",
+		"pretypecheck": "pnpm cf-typegen",
+		"typecheck": "tsc --noEmit",
 		"pretest": "pnpm cf-typegen",
 		"test": "vitest run",
 		"test:watch": "vitest",
@@ -21,31 +26,22 @@
 		"cf-typegen": "wrangler types --env-interface CloudflareEnv ./cloudflare-env.d.ts"
 	},
 	"dependencies": {
-		"@modelcontextprotocol/sdk": "^1.29.0",
-		"@opennextjs/cloudflare": "^1.19.0",
-		"next": "16.2.3",
-		"react": "19.2.5",
-		"react-dom": "19.2.5",
-		"zod": "^4.3.6"
-	},
-	"pnpm": {
-		"onlyBuiltDependencies": [
-			"esbuild",
-			"sharp",
-			"unrs-resolver",
-			"workerd"
-		]
+		"@modelcontextprotocol/sdk": "^1.32.2",
+		"@opennextjs/cloudflare": "^1.20.19",
+		"next": "16.4.6",
+		"react": "19.3.1",
+		"react-dom": "19.3.1",
+		"zod": "^4.6.7"
 	},
 	"devDependencies": {
-		"@eslint/eslintrc": "^3.3.5",
-		"@next/eslint-plugin-next": "16.2.3",
-		"@types/node": "^25.5.2",
-		"@types/react": "^19.2.14",
-		"@types/react-dom": "^19.2.3",
-		"eslint": "^9.39.4",
-		"eslint-config-next": "16.2.3",
-		"typescript": "^5.9.3",
-		"vitest": "^4.1.5",
-		"wrangler": "^4.81.1"
+		"@types/node": "^26.6.11",
+		"@types/react": "^19.3.3",
+		"@types/react-dom": "^19.3.0",
+		"eslint": "^10.15.0",
+		"eslint-config-next": "16.4.6",
+		"typescript": "^6.0.3",
+		"vite": "^8.4.0",
+		"vitest": "^5.1.2",
+		"wrangler": "^4.168.0"
 	}
 }

@@ -1,19 +1,17 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
-import { decodeBasicCredentials, safeEqual } from "@/lib/auth";
-import { SECURITY_HEADERS, parseAllowedOrigins } from "@/lib/cors";
-import { problemResponse } from "@/lib/errors";
+import { decodeBasicCredentials, safeEqual } from "@/lib/http/auth";
+import { SECURITY_HEADERS, parseAllowedOrigins } from "@/lib/http/cors";
+import { problemResponse } from "@/lib/http/errors";
 
 const DEFAULT_REALM = "Todoist Daily Agent";
 
 export async function proxy(request: NextRequest) {
   const { env } = getCloudflareContext();
 
-  // CORS preflight requests cannot carry an Authorization header (Fetch spec),
-  // so they must bypass Basic Auth. Defense-in-depth: pre-validate Origin in
-  // the proxy itself so any future route that forgets to call
-  // resolveOrigin() cannot be probed cross-origin via OPTIONS.
+  // CORS preflight requests cannot carry Authorization headers per Fetch spec;
+  // pre-validate Origin here before passing through to route OPTIONS handlers.
   if (request.method === "OPTIONS") {
     const allowedOrigins = parseAllowedOrigins(env.FRONTEND_ORIGIN);
     const requestOrigin = request.headers.get("origin");
@@ -28,7 +26,6 @@ export async function proxy(request: NextRequest) {
   const realm = env.AUTH_REALM || DEFAULT_REALM;
 
   if (!username || !password) {
-    // Do not reveal which secret is missing.
     console.error("Basic auth secrets are not configured");
     return problemResponse({ status: 500, code: "misconfigured", headers: SECURITY_HEADERS });
   }
@@ -82,10 +79,7 @@ function withSecurityHeaders(response: NextResponse) {
   return response;
 }
 
-// Explicit allow-list of protected paths: the SPA shell (`/`), the public alias
-// `/plan` (rewritten to `/api/plan`), and every `/api/*` route. Static assets
-// under `/_next/*` stay public. An explicit list avoids a negative lookahead
-// silently protecting — or exposing — future routes.
+// Explicit allow-list keeps `/_next/*` static assets public while protecting the app and API.
 export const config = {
   matcher: ["/", "/plan", "/api/:path*"],
 };

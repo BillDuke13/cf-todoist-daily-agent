@@ -2,10 +2,9 @@ openapi: 3.1.0
 info:
   title: Todoist Daily Agent API
   description: |
-    Cloudflare Worker endpoint that orchestrates Workers AI planning and the Todoist MCP Streamable HTTP pipeline.
-    The API follows Google Cloud API Design Guide conventions. `POST /plan` returns newline-delimited JSON
-    (a versioned, flat event envelope) so clients can surface progress in near real time. All error responses
-    use RFC 9457 Problem Details (`application/problem+json`).
+    Cloudflare Worker endpoints for Workers AI task planning, Todoist MCP synchronization, and voice transcription.
+    `POST /plan` returns newline-delimited JSON (`application/x-ndjson`) with a versioned flat event envelope.
+    All HTTP error responses use RFC 9457 Problem Details (`application/problem+json`).
   version: "2.0.0"
 servers:
   - url: https://{workerHost}
@@ -19,12 +18,12 @@ paths:
   /plan:
     options:
       summary: Preflight request
-      description: Responds to browser preflight requests. Always returns 204 to signal the supported headers.
+      description: Responds to browser CORS preflight requests with supported methods and headers.
       responses:
         "204":
-          description: CORS metadata returned with no body.
+          description: CORS headers returned with no body.
         "403":
-          description: Origin not authorized by `FRONTEND_ORIGIN` (rejected in `src/proxy.ts`).
+          description: Origin not authorized by `FRONTEND_ORIGIN`.
           content:
             application/problem+json:
               schema:
@@ -32,10 +31,9 @@ paths:
     post:
       summary: Generate a daily plan and synchronize Todoist tasks
       description: |
-        Accepts a narrative prompt plus optional scheduling, defaults, and limits, runs the two-pass Workers AI
+        Accepts a prompt plus optional scheduling, defaults, and limits, runs the two-pass Workers AI
         pipeline, and pushes each resulting task to the Todoist MCP Streamable HTTP server. The response body is
-        `application/x-ndjson` where every line is one event of the stream contract (see `PlanEvent`). The first
-        line is always a `stream.open` event announcing the protocol version.
+        `application/x-ndjson` where each line is a `PlanEvent`, starting with `stream.open`.
       requestBody:
         required: true
         content:
@@ -50,18 +48,16 @@ paths:
               schema:
                 $ref: '#/components/schemas/PlanEventStream'
         "400":
-          description: Validation failure. `errors[]` lists the offending fields.
+          description: Validation failure. `errors[]` lists the invalid fields.
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
         "401":
-          description: |
-            Missing or invalid HTTP Basic Auth credentials. Enforced by `src/proxy.ts`
-            before the route handler runs.
+          description: Missing or invalid HTTP Basic Auth credentials.
           headers:
             WWW-Authenticate:
-              description: Basic Auth challenge with the configured realm (`AUTH_REALM`).
+              description: Basic Auth challenge with the configured `AUTH_REALM`.
               schema:
                 type: string
           content:
@@ -75,7 +71,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
         "413":
-          description: Request body exceeds the 64KB cap enforced before JSON parsing.
+          description: Request body exceeds the 64 KB limit.
           content:
             application/problem+json:
               schema:
@@ -89,22 +85,21 @@ paths:
   /api/transcribe:
     options:
       summary: Preflight request
-      description: Responds to browser preflight requests. Always returns 204 to signal the supported headers.
+      description: Responds to browser CORS preflight requests with supported methods and headers.
       responses:
         "204":
-          description: CORS metadata returned with no body.
+          description: CORS headers returned with no body.
         "403":
-          description: Origin not authorized by `FRONTEND_ORIGIN` (rejected in `src/proxy.ts`).
+          description: Origin not authorized by `FRONTEND_ORIGIN`.
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
     post:
-      summary: Convert microphone audio into a planning prompt
+      summary: Transcribe microphone audio into text
       description: |
-        Helper endpoint used by the front-end voice button. Accepts a base64 encoded WebM/Opus clip (≤ 60 seconds),
-        forwards it to `@cf/openai/whisper-large-v3-turbo`, and returns the raw text transcription so the UI can
-        auto-submit `/plan`. The success body is `application/json`; errors are `application/problem+json`.
+        Accepts a base64-encoded WebM/Opus clip (up to 8 MB decoded), forwards it to
+        `@cf/openai/whisper-large-v3-turbo`, and returns the transcribed text as JSON.
       requestBody:
         required: true
         content:
@@ -119,18 +114,16 @@ paths:
               schema:
                 $ref: '#/components/schemas/TranscriptionResponse'
         "400":
-          description: Invalid payload (missing audio or failing validation).
+          description: Invalid payload.
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
         "401":
-          description: |
-            Missing or invalid HTTP Basic Auth credentials. Enforced by `src/proxy.ts`
-            before the route handler runs.
+          description: Missing or invalid HTTP Basic Auth credentials.
           headers:
             WWW-Authenticate:
-              description: Basic Auth challenge with the configured realm (`AUTH_REALM`).
+              description: Basic Auth challenge with the configured `AUTH_REALM`.
               schema:
                 type: string
           content:
@@ -144,7 +137,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
         "413":
-          description: Audio payload is larger than the allowed 8MB limit (content-length pre-check or decoded-size check).
+          description: Audio payload exceeds the 8 MB limit.
           content:
             application/problem+json:
               schema:
@@ -173,9 +166,8 @@ components:
       required:
         - input
       description: |
-        Request fields grouped by intent. The Worker rejects bodies larger than 64KB before parsing and requires
-        `Content-Type: application/json` (otherwise `415`). Every object is strict — unknown properties are rejected.
-        The per-field bounds mirror the server-side Zod schema.
+        Grouped request payload. Unknown keys are rejected at all levels. Bodies over 64 KB
+        return `413` and non-JSON `Content-Type` values return `415`.
       properties:
         input:
           type: object
@@ -187,16 +179,16 @@ components:
               type: string
               minLength: 1
               maxLength: 8192
-              description: Natural language description of what should be planned for the day.
+              description: Natural-language description of what to plan.
             preferences:
               type: string
               minLength: 1
               maxLength: 2048
-              description: Additional constraints, focus blocks, or other hints for the planner.
+              description: Additional constraints or focus preferences.
         scheduling:
           type: object
           additionalProperties: false
-          description: Optional scheduling hints applied when the model generates due strings.
+          description: Optional scheduling hints for due dates.
           properties:
             timezone:
               type: string
@@ -207,17 +199,17 @@ components:
               type: string
               minLength: 3
               maxLength: 256
-              description: Natural language deadline (for example "today before 6pm").
+              description: Natural-language deadline (for example "today before 6pm").
         defaults:
           type: object
           additionalProperties: false
-          description: Optional defaults applied to generated tasks unless the model overrides them.
+          description: Fallback task metadata applied when the model does not override it.
           properties:
             priority:
               type: integer
               minimum: 1
               maximum: 4
-              description: Default Todoist priority when the model does not supply one.
+              description: Default Todoist REST priority (4 = P1, 1 = P4).
             labels:
               type: array
               maxItems: 5
@@ -225,7 +217,7 @@ components:
                 type: string
                 minLength: 1
                 maxLength: 64
-              description: Default Todoist labels to apply to every generated task unless overridden.
+              description: Default Todoist labels.
         limits:
           type: object
           additionalProperties: false
@@ -235,13 +227,12 @@ components:
               minimum: 1
               maximum: 10
               default: 5
-              description: Caps the number of actionable tasks generated by Workers AI.
+              description: Maximum number of generated tasks.
     PlanEventStream:
       description: |
-        The Worker returns newline-delimited JSON. Each line is one `PlanEvent`. Every event carries a monotonic
-        `seq` (the leading `stream.open` is `seq: 0`) and an ISO-8601 `ts`. Clients must parse until the stream ends
-        and must tolerate unknown event types (in particular `debug.*` lines, which appear only when
-        `DEBUG_EVENTS=true` and are NOT part of the stable contract).
+        Newline-delimited JSON stream of `PlanEvent` objects. Each event has a monotonic `seq`
+        (starting at 0 for `stream.open`) and an ISO-8601 `ts`. Clients must ignore unknown
+        event types such as `DEBUG_EVENTS`-gated `debug.*` frames.
       type: array
       items:
         $ref: '#/components/schemas/PlanEvent'
@@ -249,13 +240,13 @@ components:
       oneOf:
         - type: object
           required: [type, protocol, seq, ts]
-          description: First line of the stream. Announces the contract version and echoes normalized request params.
+          description: Leading frame announcing protocol version and normalized request limits.
           properties:
             type:
               const: stream.open
             protocol:
               type: string
-              description: Stream contract version (for example `1.0`).
+              description: Stream protocol version (currently `1.0`).
             seq:
               type: integer
               description: Always 0.
@@ -264,7 +255,6 @@ components:
               format: date-time
             request:
               type: object
-              description: Echo of normalized request parameters. Contains no sensitive fields.
               properties:
                 maxTasks:
                   type: integer
@@ -281,7 +271,6 @@ components:
             stage:
               type: string
               enum: [ai.init, intent.detect, intent.classified]
-              description: Closed set of progress stages.
             message:
               type: string
         - type: object
@@ -298,7 +287,7 @@ components:
               type: string
             intent:
               type: string
-              description: Scenario detected by the intent classifier (for example `single_reminder`).
+              description: Detected intent scenario (for example `single_reminder`).
             tasks:
               type: array
               items:
@@ -322,10 +311,10 @@ components:
               type: string
             code:
               type: string
-              description: Stable failure code when `status` is `failed` (for example `todoist_sync_failed`).
+              description: Stable failure code when `status` is `failed`.
             detail:
               type: string
-              description: Raw failure detail. Present only when `DEBUG_EVENTS=true`.
+              description: Raw failure detail, present only when `DEBUG_EVENTS=true`.
         - type: object
           required: [type, seq, ts, created, failed, tasks, elapsedMs]
           properties:
@@ -358,23 +347,19 @@ components:
               format: date-time
             code:
               type: string
-              description: |
-                Stable error code from the `Problem.code` taxonomy. Terminal `/plan`
-                failures currently emit `ai_unavailable` (planning model failed),
-                `todoist_unavailable` (MCP connection failed), or `internal`.
+              description: Stable error code from `Problem.code` (`ai_unavailable`, `todoist_unavailable`, or `internal`).
             message:
               type: string
             detail:
               type: string
-              description: Present only when `DEBUG_EVENTS=true`, so the production stream stays opaque.
+              description: Present only when `DEBUG_EVENTS=true`.
         - type: object
           required: [type, seq, ts]
           additionalProperties: true
           description: |
-            Internal observability event emitted only when the worker is started with `DEBUG_EVENTS=true`.
-            Concrete variants include `debug.tools`, `debug.metadata`, `debug.inference`, and `debug.error`.
-            The payload shape is intentionally open and is NOT part of the stable contract; production
-            clients must ignore unknown event types instead of relying on these.
+            Internal observability event emitted only when `DEBUG_EVENTS=true`
+            (`debug.tools`, `debug.metadata`, `debug.inference`, `debug.error`).
+            Not part of the stable contract.
           properties:
             type:
               type: string
@@ -392,10 +377,10 @@ components:
       properties:
         audio:
           type: string
-          description: Base64 encoded audio data (WebM/Opus recommended, ≤ 8MB decoded).
+          description: Base64-encoded audio payload (WebM/Opus recommended, up to 8 MB decoded).
         language:
           type: string
-          description: Optional hint for the language contained in the audio clip.
+          description: Optional language hint.
         task:
           type: string
           enum: [transcribe, translate]
@@ -410,7 +395,7 @@ components:
           description: Transcribed text returned by Whisper.
         language:
           type: string
-          description: Language code detected by the model, when available.
+          description: Detected language code, when available.
     NormalizedTask:
       type: object
       required:
@@ -424,19 +409,17 @@ components:
           type: integer
           minimum: 1
           maximum: 4
-          description: |
-            Todoist REST priority. `4` is the highest urgency (UI label P1) and `1`
-            is the lowest (UI label P4).
+          description: Todoist REST priority (4 = P1 highest, 1 = P4 lowest).
         labels:
           type: array
           items:
             type: string
         projectId:
           type: string
-          description: Todoist project ID that the task should be created in.
+          description: Todoist project ID.
         projectName:
           type: string
-          description: Human-readable project name aligned with `projectId`.
+          description: Human-readable project name matching `projectId`.
         due:
           type: object
           properties:
@@ -463,16 +446,13 @@ components:
           type: string
         code:
           type: string
-          description: Stable failure code when `status` is `failed` (for example `todoist_sync_failed`).
+          description: Stable failure code when `status` is `failed`.
         error:
           type: string
-          description: Raw failure detail. Present only when `DEBUG_EVENTS=true`.
+          description: Raw failure detail, present only when `DEBUG_EVENTS=true`.
     Problem:
       type: object
-      description: |
-        RFC 9457 Problem Details. All error responses use media type `application/problem+json`.
-        `code` is the stable, machine-readable discriminator clients should branch on; it mirrors the
-        `plan.error.code` / `todoist.task.code` values in the stream.
+      description: RFC 9457 Problem Details (`application/problem+json`).
       required:
         - type
         - title
@@ -481,7 +461,7 @@ components:
       properties:
         type:
           type: string
-          description: URI reference identifying the problem type (for example `/errors/validation_failed`).
+          description: Relative problem type URI (for example `/errors/validation_failed`).
         title:
           type: string
         status:
@@ -505,13 +485,13 @@ components:
           type: string
         errors:
           type: array
-          description: Present for `validation_failed`; one entry per invalid field.
+          description: Field-level validation errors for `validation_failed`.
           items:
             type: object
             required: [field, message]
             properties:
               field:
                 type: string
-                description: Dotted path to the offending field (for example `input.prompt`).
+                description: Dotted field path (for example `input.prompt`).
               message:
                 type: string

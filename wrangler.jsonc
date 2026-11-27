@@ -1,18 +1,11 @@
 /**
- * Wrangler configuration. Reference:
- * https://developers.cloudflare.com/workers/wrangler/configuration/
+ * Wrangler configuration: https://developers.cloudflare.com/workers/wrangler/configuration/
  *
- * Sensitive values (TODOIST_TOKEN, BASIC_AUTH_*, FRONTEND_ORIGIN) are uploaded
- * via `wrangler secret put` (production) or `.dev.vars` (local). They MUST NOT
- * be added to `vars` here.
+ * Upload secrets (TODOIST_TOKEN, BASIC_AUTH_USER, BASIC_AUTH_PASS, FRONTEND_ORIGIN)
+ * via `wrangler secret put` or `.dev.vars` locally; keep them out of `vars`.
  *
- * `DEBUG_EVENTS` is intentionally a `vars` default of `"false"`; flip it per
- * environment with `wrangler secret put DEBUG_EVENTS true` when triaging.
- * `cf-typegen` infers the literal `"false"` for it — see `isDebugEnabled` in
- * `src/app/api/plan/route.ts` for the runtime cast that handles overrides.
- *
- * `AUTH_REALM` is a non-sensitive default for the HTTP Basic Auth challenge
- * realm in `src/proxy.ts`; override it per environment as needed.
+ * `DEBUG_EVENTS` defaults to `"false"` here and can be overridden per environment
+ * via `wrangler secret put DEBUG_EVENTS true` (handled in `src/lib/cloudflare/env.ts`).
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",

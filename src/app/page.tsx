@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { PlanStream } from "./components/PlanStream";
-import { PromptComposer } from "./components/PromptComposer";
-import { usePlanStream } from "./hooks/usePlanStream";
-import { useVoiceCapture } from "./hooks/useVoiceCapture";
+import { PlanStream } from "@/components/PlanStream";
+import { PromptComposer } from "@/components/PromptComposer";
+import { usePlanStream } from "@/hooks/usePlanStream";
+import { useVoiceCapture } from "@/hooks/useVoiceCapture";
 import styles from "./page.module.css";
 
 const defaultTimezone =
@@ -20,8 +20,19 @@ const EXAMPLE_PROMPTS = [
 
 export default function Home() {
   const [prompt, setPrompt] = useState("");
-  const { start, cancel, isStreaming, hasActivity, steps, intent, summary, taskStates, final, error, errorDetail } =
-    usePlanStream();
+  const {
+    start,
+    cancel,
+    isStreaming,
+    hasActivity,
+    steps,
+    intent,
+    summary,
+    taskStates,
+    final,
+    error,
+    errorDetail,
+  } = usePlanStream();
 
   const runPlan = useCallback(
     (promptText: string) => {
@@ -55,8 +66,8 @@ export default function Home() {
         <header className={styles.hero}>
           <h1 className={styles.title}>Todoist Daily Planner</h1>
           <p className={styles.tagline}>
-            Describe your day in one sentence. The agent shapes it into a focused task list and
-            pushes it straight into Todoist.
+            Describe your day in plain language to generate a structured task list and sync it to
+            Todoist.
           </p>
         </header>
 
@@ -85,7 +96,7 @@ export default function Home() {
           />
         )}
       </main>
-      <footer className={styles.footer}>Built for the Todoist MCP workflow on Cloudflare Workers.</footer>
+      <footer className={styles.footer}>Cloudflare Workers · Workers AI · Todoist MCP</footer>
     </div>
   );
 }

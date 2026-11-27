@@ -1,14 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { z } from "zod";
-import { OriginNotAllowedError, buildCorsHeaders, forbidden, resolveOrigin } from "@/lib/cors";
-import { problemResponse, zodIssuesToErrors } from "@/lib/errors";
+import { getWorkersAi } from "@/lib/cloudflare/env";
+import { buildCorsHeaders } from "@/lib/http/cors";
+import { problemResponse, zodIssuesToErrors } from "@/lib/http/errors";
+import {
+  exceedsDeclaredLength,
+  handleCorsPreflight,
+  isJsonContentType,
+  readJsonBody,
+  resolveRequestOrigin,
+} from "@/lib/http/request";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_AUDIO_BYTES = 8 * 1024 * 1024; // 8MB after base64 decoding.
-// Base64 inflates the payload ~4/3; allow a small JSON envelope on top.
+const WHISPER_MODEL_ID = "@cf/openai/whisper-large-v3-turbo";
+const MAX_AUDIO_BYTES = 8 * 1024 * 1024;
+// Base64 inflates payloads by ~4/3; add headroom for the JSON envelope.
 const MAX_REQUEST_BYTES = Math.ceil(MAX_AUDIO_BYTES * 1.4) + 1024;
 
 const whisperRequestSchema = z
@@ -17,40 +26,22 @@ const whisperRequestSchema = z
     language: z.string().min(2).optional(),
     task: z.enum(["transcribe", "translate"]).optional(),
   })
-  // Matches `additionalProperties: false` in openapi/plan.yaml#WhisperRequest and
-  // the strictness of the /plan request schema.
   .strict();
 
 export async function OPTIONS(request: NextRequest) {
   const { env } = getCloudflareContext();
-  let origin: string;
-  try {
-    origin = resolveOrigin(request, env.FRONTEND_ORIGIN);
-  } catch (error) {
-    if (error instanceof OriginNotAllowedError) {
-      return forbidden();
-    }
-    throw error;
-  }
-  return new Response(null, {
-    status: 204,
-    headers: buildCorsHeaders(origin, { "Access-Control-Max-Age": "600" }),
-  });
+  return handleCorsPreflight(request, env.FRONTEND_ORIGIN);
 }
 
 export async function POST(request: NextRequest) {
   const { env } = getCloudflareContext();
-  let origin: string;
-  try {
-    origin = resolveOrigin(request, env.FRONTEND_ORIGIN);
-  } catch (error) {
-    if (error instanceof OriginNotAllowedError) {
-      return forbidden();
-    }
-    throw error;
+  const originResult = resolveRequestOrigin(request, env.FRONTEND_ORIGIN);
+  if (!originResult.ok) {
+    return originResult.response;
   }
+  const { origin } = originResult;
 
-  if (!isJsonRequest(request)) {
+  if (!isJsonContentType(request)) {
     return problemResponse({
       status: 415,
       code: "unsupported_media_type",
@@ -59,8 +50,7 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const declaredLength = Number.parseInt(request.headers.get("content-length") ?? "", 10);
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_REQUEST_BYTES) {
+  if (exceedsDeclaredLength(request, MAX_REQUEST_BYTES)) {
     return problemResponse({
       status: 413,
       code: "payload_too_large",
@@ -69,7 +59,7 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const body = await readJson(request);
+  const body = await readJsonBody(request);
   const parsed = whisperRequestSchema.safeParse(body);
   if (!parsed.success) {
     return problemResponse({
@@ -90,10 +80,7 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const ai = env.AI as unknown as {
-    run: (model: string, payload: Record<string, unknown>) => Promise<unknown>;
-  };
-
+  const ai = getWorkersAi(env);
   try {
     const payload: Record<string, unknown> = {
       audio: parsed.data.audio,
@@ -105,7 +92,7 @@ export async function POST(request: NextRequest) {
       payload.task = parsed.data.task;
     }
 
-    const response = (await ai.run("@cf/openai/whisper-large-v3-turbo", payload)) as {
+    const response = (await ai.run(WHISPER_MODEL_ID, payload)) as {
       text?: string;
       transcription_info?: { language?: string };
     };
@@ -129,20 +116,5 @@ export async function POST(request: NextRequest) {
       detail: "Unable to transcribe audio",
       headers: buildCorsHeaders(origin),
     });
-  }
-}
-
-function isJsonRequest(request: NextRequest) {
-  // Compare the bare media type so `application/json; charset=utf-8` passes while
-  // composite values like `text/html+application/json` do not.
-  const mediaType = (request.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-  return mediaType === "application/json";
-}
-
-async function readJson(request: NextRequest) {
-  try {
-    return await request.json();
-  } catch {
-    return null;
   }
 }
